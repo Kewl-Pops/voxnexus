@@ -1,0 +1,145 @@
+# =============================================================================
+# VoxNexus Docker Compose Configuration
+# =============================================================================
+# Copyright 2026 Cothink LLC. Licensed under Apache-2.0.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: voxnexus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-voxnexus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-voxnexus_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-voxnexus}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-voxnexus} -d ${POSTGRES_DB:-voxnexus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - voxnexus-network
+
+  # ---------------------------------------------------------------------------
+  # Redis (Caching, Pub/Sub, Session Store)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: voxnexus-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - voxnexus-network
+
+  # ---------------------------------------------------------------------------
+  # Redis Commander (Optional: Redis GUI for Development)
+  # ---------------------------------------------------------------------------
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: voxnexus-redis-commander
+    restart: unless-stopped
+    profiles:
+      - dev-tools
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8085:8081"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - voxnexus-network
+
+  # ---------------------------------------------------------------------------
+  # pgAdmin (Optional: PostgreSQL GUI for Development)
+  # ---------------------------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: voxnexus-pgadmin
+    restart: unless-stopped
+    profiles:
+      - dev-tools
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@voxnexus.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - voxnexus-network
+
+  # ---------------------------------------------------------------------------
+  # Kokoro TTS Service (Local Text-to-Speech)
+  # ---------------------------------------------------------------------------
+  tts:
+    build:
+      context: ./apps/tts
+      dockerfile: Dockerfile
+    container_name: voxnexus-tts
+    restart: unless-stopped
+    environment:
+      TTS_PORT: 8880
+      TTS_HOST: 0.0.0.0
+      KOKORO_MODEL_DIR: /app/models
+      KOKORO_CACHE_DIR: /app/cache
+    ports:
+      - "8880:8880"
+    volumes:
+      - tts_models:/app/models
+      - tts_cache:/app/cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8880/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    networks:
+      - voxnexus-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
+# -----------------------------------------------------------------------------
+# Networks
+# -----------------------------------------------------------------------------
+networks:
+  voxnexus-network:
+    driver: bridge
+    name: voxnexus-network
+
+# -----------------------------------------------------------------------------
+# Volumes
+# -----------------------------------------------------------------------------
+volumes:
+  postgres_data:
+    name: voxnexus-postgres-data
+  redis_data:
+    name: voxnexus-redis-data
+  tts_models:
+    name: voxnexus-tts-models
+  tts_cache:
+    name: voxnexus-tts-cache

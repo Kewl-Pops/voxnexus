@@ -1,0 +1,43 @@
+{
+  "tagline": "Voice AI, Simplified",
+  "taglineAlternatives": [
+    "Build Voice Agents in Minutes",
+    "The Open Platform for Voice AI"
+  ],
+  "heroHeadline": "Build AI Voice Agents Without the Complexity",
+  "heroSubheadline": "VoxNexus is the open-source platform for creating intelligent voice agents. Self-host for full control, or let us handle the infrastructure with our managed cloud.",
+  "features": [
+    {
+      "title": "Open Source Core",
+      "description": "MIT licensed, fully customizable, runs anywhere",
+      "icon": "code"
+    },
+    {
+      "title": "Plugin Architecture",
+      "description": "Swap LLMs, STT, and TTS providers with one config change",
+      "icon": "puzzle"
+    },
+    {
+      "title": "Real-Time Voice",
+      "description": "Sub-second latency powered by LiveKit",
+      "icon": "zap"
+    },
+    {
+      "title": "Managed Cloud",
+      "description": "Skip the ops - we handle scaling, updates, and uptime",
+      "icon": "cloud"
+    }
+  ],
+  "ctaPrimary": "Start Building Free",
+  "ctaSecondary": "View Documentation",
+  "colorPalette": {
+    "primary": "#7C3AED",
+    "secondary": "#1E1B4B",
+    "accent": "#10B981",
+    "background": "#0F0F0F",
+    "foreground": "#FAFAFA",
+    "rationale": "Purple conveys innovation and AI, green accent for growth/success"
+  },
+  "brandVoice": "Technical but approachable. We speak developer, but we don't gatekeep. Confident without being arrogant.",
+  "socialProofHeadline": "Trusted by developers and teams worldwide"
+}

@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoxNexus - Voice AI, Simplified</title>
+    <meta name="description" content="The open-source platform for creating intelligent voice agents. Self-host for full control, or let us handle the infrastructure with our managed cloud.">
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="VoxNexus - Voice AI, Simplified">
+    <meta property="og:description" content="Build AI voice agents without the complexity. Open source core with managed cloud option.">
+    <meta property="og:image" content="/images/og-image.png">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://voxnexus.pro">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="VoxNexus - Voice AI, Simplified">
+    <meta name="twitter:description" content="Build AI voice agents without the complexity.">
+    <meta name="twitter:image" content="/images/og-image.png">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="/images/logo.png">
+    <link rel="apple-touch-icon" href="/images/logo.png">
+
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#7C3AED',
+                        'primary-dark': '#6D28D9',
+                        secondary: '#1E1B4B',
+                        accent: '#10B981',
+                        dark: '#0F0F0F',
+                        'dark-lighter': '#1A1A1A',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+
+    <!-- Inter Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+        }
+
+        .hero-gradient {
+            background: linear-gradient(135deg, rgba(124, 58, 237, 0.15) 0%, rgba(16, 185, 129, 0.1) 50%, rgba(30, 27, 75, 0.2) 100%);
+        }
+
+        .glow {
+            box-shadow: 0 0 60px rgba(124, 58, 237, 0.3);
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(124, 58, 237, 0.15);
+        }
+
+        .text-gradient {
+            background: linear-gradient(135deg, #7C3AED 0%, #10B981 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .float-animation {
+            animation: float 4s ease-in-out infinite;
+        }
+
+        .code-block {
+            background: linear-gradient(135deg, #1E1B4B 0%, #0F0F0F 100%);
+        }
+    </style>
+</head>
+<body class="bg-dark text-white antialiased">
+    <!-- Navigation -->
+    <nav class="fixed top-0 left-0 right-0 z-50 bg-dark/80 backdrop-blur-lg border-b border-white/5">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <!-- Logo -->
+                <a href="/" class="flex items-center gap-3 flex-shrink-0">
+                    <img src="/images/logo.png" alt="VoxNexus" class="h-8 w-8 rounded-lg">
+                    <span class="text-xl font-bold">VoxNexus</span>
+                </a>
+
+                <!-- Desktop Navigation -->
+                <div class="hidden md:flex items-center gap-8">
+                    <a href="#features" class="text-gray-400 hover:text-white transition-colors">Features</a>
+                    <a href="#how-it-works" class="text-gray-400 hover:text-white transition-colors">How it Works</a>
+                    <a href="#pricing" class="text-gray-400 hover:text-white transition-colors">Pricing</a>
+                    <a href="https://github.com/voxnexus/voxnexus" target="_blank" class="text-gray-400 hover:text-white transition-colors flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                        GitHub
+                    </a>
+                </div>
+
+                <!-- CTA Buttons -->
+                <div class="hidden md:flex items-center gap-4">
+                    <a href="/login" class="text-gray-400 hover:text-white transition-colors">Sign In</a>
+                    <a href="/register" class="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-lg font-medium transition-colors">
+                        Start Building Free
+                    </a>
+                </div>
+
+                <!-- Mobile Menu Button -->
+                <button id="mobile-menu-btn" class="md:hidden p-2 text-gray-400 hover:text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Mobile Menu -->
+        <div id="mobile-menu" class="hidden md:hidden bg-dark-lighter border-t border-white/5">
+            <div class="px-4 py-4 space-y-3">
+                <a href="#features" class="block text-gray-400 hover:text-white py-2">Features</a>
+                <a href="#how-it-works" class="block text-gray-400 hover:text-white py-2">How it Works</a>
+                <a href="#pricing" class="block text-gray-400 hover:text-white py-2">Pricing</a>
+                <a href="https://github.com/voxnexus/voxnexus" target="_blank" class="block text-gray-400 hover:text-white py-2">GitHub</a>
+                <hr class="border-white/10">
+                <a href="/login" class="block text-gray-400 hover:text-white py-2">Sign In</a>
+                <a href="/register" class="block bg-primary hover:bg-primary-dark text-white text-center px-4 py-2 rounded-lg font-medium">
+                    Start Building Free
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="relative min-h-screen flex items-center justify-center pt-16 overflow-hidden">
+        <!-- Background Image -->
+        <div class="absolute inset-0 z-0">
+            <img src="/images/hero-bg.png" alt="" class="w-full h-full object-cover opacity-40">
+            <div class="absolute inset-0 hero-gradient"></div>
+        </div>
+
+        <div class="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 text-center">
+            <!-- Badge -->
+            <div class="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-full px-4 py-2 mb-8">
+                <span class="w-2 h-2 bg-accent rounded-full animate-pulse"></span>
+                <span class="text-sm text-gray-300">Open Source & Cloud Native</span>
+            </div>
+
+            <!-- Headline -->
+            <h1 class="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight mb-6">
+                Build AI Voice Agents<br>
+                <span class="text-gradient">Without the Complexity</span>
+            </h1>
+
+            <!-- Subheadline -->
+            <p class="text-lg sm:text-xl text-gray-400 max-w-3xl mx-auto mb-10">
+                VoxNexus is the open-source platform for creating intelligent voice agents.
+                Self-host for full control, or let us handle the infrastructure with our managed cloud.
+            </p>
+
+            <!-- CTAs -->
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+                <a href="/register" class="w-full sm:w-auto bg-primary hover:bg-primary-dark text-white px-8 py-4 rounded-xl font-semibold text-lg transition-all glow hover:scale-105">
+                    Start Building Free
+                </a>
+                <a href="#how-it-works" class="w-full sm:w-auto bg-white/5 hover:bg-white/10 border border-white/10 text-white px-8 py-4 rounded-xl font-semibold text-lg transition-all">
+                    View Documentation
+                </a>
+            </div>
+
+            <!-- Code Preview -->
+            <div class="max-w-2xl mx-auto code-block rounded-2xl p-1 glow">
+                <div class="bg-dark rounded-xl overflow-hidden">
+                    <div class="flex items-center gap-2 px-4 py-3 border-b border-white/5">
+                        <span class="w-3 h-3 rounded-full bg-red-500/80"></span>
+                        <span class="w-3 h-3 rounded-full bg-yellow-500/80"></span>
+                        <span class="w-3 h-3 rounded-full bg-green-500/80"></span>
+                        <span class="ml-4 text-xs text-gray-500">terminal</span>
+                    </div>
+                    <pre class="p-4 text-left text-sm overflow-x-auto"><code class="text-gray-300"><span class="text-gray-500"># Clone and run in 60 seconds</span>
+<span class="text-accent">$</span> git clone https://github.com/voxnexus/voxnexus
+<span class="text-accent">$</span> cd voxnexus && make setup
+<span class="text-accent">$</span> make dev
+
+<span class="text-primary">✓</span> VoxNexus running at <span class="text-accent">http://localhost:3000</span></code></pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scroll Indicator -->
+        <div class="absolute bottom-8 left-1/2 -translate-x-1/2 float-animation">
+            <svg class="w-6 h-6 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
+            </svg>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="py-24 bg-dark-lighter">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <!-- Section Header -->
+            <div class="text-center mb-16">
+                <h2 class="text-3xl sm:text-4xl font-bold mb-4">Everything you need to build voice AI</h2>
+                <p class="text-gray-400 text-lg max-w-2xl mx-auto">
+                    A complete platform with the flexibility of open source and the convenience of managed infrastructure.
+                </p>
+            </div>
+
+            <!-- Feature Grid -->
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <!-- Feature 1 -->
+                <div class="feature-card bg-dark border border-white/5 rounded-2xl p-6 transition-all duration-300">
+                    <div class="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center mb-4">
+                        <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-2">Open Source Core</h3>
+                    <p class="text-gray-400">MIT licensed, fully customizable, runs anywhere. Fork it, extend it, make it yours.</p>
+                </div>
+
+                <!-- Feature 2 -->
+                <div class="feature-card bg-dark border border-white/5 rounded-2xl p-6 transition-all duration-300">
+                    <div class="w-12 h-12 bg-accent/20 rounded-xl flex items-center justify-center mb-4">
+                        <svg class="w-6 h-6 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-2">Plugin Architecture</h3>
+                    <p class="text-gray-400">Swap LLMs, STT, and TTS providers with one config change. OpenAI, Anthropic, Deepgram, and more.</p>
+                </div>
+
+                <!-- Feature 3 -->
+                <div class="feature-card bg-dark border border-white/5 rounded-2xl p-6 transition-all duration-300">
+                    <div class="w-12 h-12 bg-yellow-500/20 rounded-xl flex items-center justify-center mb-4">
+                        <svg class="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-2">Real-Time Voice</h3>
+                    <p class="text-gray-400">Sub-second latency powered by LiveKit. Natural conversations that feel instant.</p>
+                </div>
+
+                <!-- Feature 4 -->
+                <div class="feature-card bg-dark border border-white/5 rounded-2xl p-6 transition-all duration-300">
+                    <div class="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center mb-4">
+                        <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-2">Managed Cloud</h3>
+                    <p class="text-gray-400">Skip the ops. We handle scaling, updates, and uptime so you can focus on building.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works Section -->
+    <section id="how-it-works" class="py-24 bg-dark">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl sm:text-4xl font-bold mb-4">How it works</h2>
+                <p class="text-gray-400 text-lg max-w-2xl mx-auto">
+                    From zero to production voice agent in minutes, not months.
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-8">
+                <!-- Step 1 -->
+                <div class="text-center">
+                    <div class="w-16 h-16 bg-primary/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                        <span class="text-2xl font-bold text-primary">1</span>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">Configure Your Agent</h3>
+                    <p class="text-gray-400">Choose your LLM, voice provider, and define your agent's personality through our dashboard or API.</p>
+                </div>
+
+                <!-- Step 2 -->
+                <div class="text-center">
+                    <div class="w-16 h-16 bg-accent/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                        <span class="text-2xl font-bold text-accent">2</span>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">Connect Your Tools</h3>
+                    <p class="text-gray-400">Add webhooks to integrate with your CRM, booking system, or any API. Your agent becomes your assistant.</p>
+                </div>
+
+                <!-- Step 3 -->
+                <div class="text-center">
+                    <div class="w-16 h-16 bg-blue-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                        <span class="text-2xl font-bold text-blue-500">3</span>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">Deploy & Scale</h3>
+                    <p class="text-gray-400">Go live instantly with our cloud or deploy to your own infrastructure. Scale to millions of conversations.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing Section -->
+    <section id="pricing" class="py-24 bg-dark-lighter">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl sm:text-4xl font-bold mb-4">Simple, transparent pricing</h2>
+                <p class="text-gray-400 text-lg max-w-2xl mx-auto">
+                    Start free, scale as you grow. Self-host for free forever, or let us handle the infrastructure.
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+                <!-- Self-Hosted -->
+                <div class="bg-dark border border-white/10 rounded-2xl p-8">
+                    <h3 class="text-xl font-semibold mb-2">Self-Hosted</h3>
+                    <p class="text-gray-400 mb-6">For developers who want full control</p>
+                    <div class="mb-6">
+                        <span class="text-4xl font-bold">Free</span>
+                        <span class="text-gray-400"> forever</span>
+                    </div>
+                    <ul class="space-y-3 mb-8">
+                        <li class="flex items-center gap-3 text-gray-300">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            Full source code access
+                        </li>
+                        <li class="flex items-center gap-3 text-gray-300">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            Unlimited agents
+                        </li>
+                        <li class="flex items-center gap-3 text-gray-300">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            Community support
+                        </li>
+                        <li class="flex items-center gap-3 text-gray-300">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            MIT License
+                        </li>
+                    </ul>
+                    <a href="https://github.com/voxnexus/voxnexus" class="block w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white text-center px-6 py-3 rounded-xl font-medium transition-colors">
+                        View on GitHub
+                    </a>
+                </div>
+
+                <!-- Pro -->
+                <div class="bg-gradient-to-b from-primary/20 to-dark border-2 border-primary rounded-2xl p-8 relative">
+                    <div class="absolute -top-4 left-1/2 -translate-x-1/2 bg-primary text-white text-sm font-medium px-4 py-1 rounded-full">
+                        Most Popular
+                    </div>
+                    <h3 class="text-xl font-semibold mb-2">Pro Cloud</h3>
+                    <p class="text-gray-400 mb-6">For teams shipping to production</p>
+                    <div class="mb-6">
+                        <span class="text-4xl font-bold">$49</span>
+                        <span class="text-gray-400">/month</span>
+                    </div>
+                    <ul class="space-y-3 mb-8">
+                        <li class="flex items-center gap-3 text-gray-300">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            1,000 voice minutes/mo
+                        </li>
+                        <li class="flex items-center gap-3 text-gray-300">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            10 active agents
+                        </li>
+                        <li class="flex items-center gap-3 text-gray-300">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            Analytics dashboard
+                        </li>
+                        <li class="flex items-center gap-3 text-gray-300">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            Email support
+                        </li>
+                    </ul>
+                    <a href="/register" class="block w-full bg-primary hover:bg-primary-dark text-white text-center px-6 py-3 rounded-xl font-medium transition-colors">
+                        Start Free Trial
+                    </a>
+                </div>
+
+                <!-- Enterprise -->
+                <div class="bg-dark border border-white/10 rounded-2xl p-8">
+                    <h3 class="text-xl font-semibold mb-2">Enterprise</h3>
+                    <p class="text-gray-400 mb-6">For large scale deployments</p>
+                    <div class="mb-6">
+                        <span class="text-4xl font-bold">Custom</span>
+                    </div>
+                    <ul class="space-y-3 mb-8">
+                        <li class="flex items-center gap-3 text-gray-300">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            Unlimited everything
+                        </li>
+                        <li class="flex items-center gap-3 text-gray-300">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            Dedicated infrastructure
+                        </li>
+                        <li class="flex items-center gap-3 text-gray-300">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            SLA guarantee
+                        </li>
+                        <li class="flex items-center gap-3 text-gray-300">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            24/7 priority support
+                        </li>
+                    </ul>
+                    <a href="mailto:enterprise@voxnexus.pro" class="block w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white text-center px-6 py-3 rounded-xl font-medium transition-colors">
+                        Contact Sales
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="py-24 bg-dark relative overflow-hidden">
+        <div class="absolute inset-0 hero-gradient opacity-50"></div>
+        <div class="relative z-10 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 class="text-3xl sm:text-4xl font-bold mb-6">Ready to build your voice AI?</h2>
+            <p class="text-gray-400 text-lg mb-10 max-w-2xl mx-auto">
+                Join thousands of developers building the next generation of voice applications. Get started in minutes.
+            </p>
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+                <a href="/register" class="w-full sm:w-auto bg-primary hover:bg-primary-dark text-white px-8 py-4 rounded-xl font-semibold text-lg transition-all glow hover:scale-105">
+                    Start Building Free
+                </a>
+                <a href="https://github.com/voxnexus/voxnexus" class="w-full sm:w-auto bg-white/5 hover:bg-white/10 border border-white/10 text-white px-8 py-4 rounded-xl font-semibold text-lg transition-all flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    Star on GitHub
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="py-12 bg-dark-lighter border-t border-white/5">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid md:grid-cols-4 gap-8 mb-8">
+                <!-- Brand -->
+                <div>
+                    <a href="/" class="flex items-center gap-3 mb-4">
+                        <img src="/images/logo.png" alt="VoxNexus" class="h-8 w-8 rounded-lg">
+                        <span class="text-xl font-bold">VoxNexus</span>
+                    </a>
+                    <p class="text-gray-400 text-sm">Voice AI, Simplified.</p>
+                </div>
+
+                <!-- Product -->
+                <div>
+                    <h4 class="font-semibold mb-4">Product</h4>
+                    <ul class="space-y-2 text-gray-400">
+                        <li><a href="#features" class="hover:text-white transition-colors">Features</a></li>
+                        <li><a href="#pricing" class="hover:text-white transition-colors">Pricing</a></li>
+                        <li><a href="/dashboard" class="hover:text-white transition-colors">Dashboard</a></li>
+                        <li><a href="/docs" class="hover:text-white transition-colors">Documentation</a></li>
+                    </ul>
+                </div>
+
+                <!-- Company -->
+                <div>
+                    <h4 class="font-semibold mb-4">Company</h4>
+                    <ul class="space-y-2 text-gray-400">
+                        <li><a href="/about" class="hover:text-white transition-colors">About</a></li>
+                        <li><a href="/blog" class="hover:text-white transition-colors">Blog</a></li>
+                        <li><a href="/careers" class="hover:text-white transition-colors">Careers</a></li>
+                        <li><a href="mailto:hello@voxnexus.pro" class="hover:text-white transition-colors">Contact</a></li>
+                    </ul>
+                </div>
+
+                <!-- Legal -->
+                <div>
+                    <h4 class="font-semibold mb-4">Legal</h4>
+                    <ul class="space-y-2 text-gray-400">
+                        <li><a href="/privacy" class="hover:text-white transition-colors">Privacy Policy</a></li>
+                        <li><a href="/terms" class="hover:text-white transition-colors">Terms of Service</a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4">
+                <p class="text-gray-500 text-sm">&copy; 2024 VoxNexus. All rights reserved.</p>
+                <div class="flex items-center gap-4">
+                    <a href="https://github.com/voxnexus" class="text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    </a>
+                    <a href="https://twitter.com/voxnexus" class="text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                    </a>
+                    <a href="https://discord.gg/voxnexus" class="text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Mobile Menu Script -->
+    <script>
+        const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+        const mobileMenu = document.getElementById('mobile-menu');
+
+        mobileMenuBtn.addEventListener('click', () => {
+            mobileMenu.classList.toggle('hidden');
+        });
+
+        // Close mobile menu when clicking a link
+        mobileMenu.querySelectorAll('a').forEach(link => {
+            link.addEventListener('click', () => {
+                mobileMenu.classList.add('hidden');
+            });
+        });
+    </script>
+</body>
+</html>

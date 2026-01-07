@@ -1,0 +1,21 @@
+# VoxNexus TTS Service Dependencies
+# Kokoro-82M Text-to-Speech Engine
+
+# Web framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+
+# TTS Engine
+kokoro>=0.8.0
+
+# Audio processing
+soundfile>=0.12.1
+numpy>=1.26.0
+
+# PyTorch (CPU version for smaller image, use torch for GPU)
+torch>=2.1.0
+torchaudio>=2.1.0
+
+# Optional: for streaming
+httpx>=0.26.0

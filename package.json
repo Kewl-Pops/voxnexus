@@ -1,0 +1,42 @@
+{
+  "name": "voxnexus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The WordPress for AI Voice Agents",
+  "license": "Apache-2.0",
+  "author": "Cothink LLC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/voxnexus.git"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "start": "turbo run start",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "db:generate": "pnpm --filter @voxnexus/db generate",
+    "db:push": "pnpm --filter @voxnexus/db push",
+    "db:migrate": "pnpm --filter @voxnexus/db migrate",
+    "db:studio": "pnpm --filter @voxnexus/db studio"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "prettier": "^3.1.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.3.0"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "allowedVersions": {}
+    }
+  }
+}

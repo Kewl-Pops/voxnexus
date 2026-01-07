@@ -1,0 +1,104 @@
+# =============================================================================
+# VoxNexus .gitignore
+# =============================================================================
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+.eggs/
+*.egg-info/
+*.egg
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Testing
+coverage/
+.coverage
+htmlcov/
+.pytest_cache/
+.nyc_output/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+*.pem
+
+# Database
+*.sqlite
+*.sqlite3
+*.db
+
+# Prisma
+prisma/*.db
+prisma/migrations/*_migration_lock.toml
+
+# Turbo
+.turbo/
+
+# Vercel
+.vercel/
+
+# Docker
+docker-compose.override.yml
+
+# Secrets (never commit these!)
+*.pem
+*.key
+credentials.json
+service-account.json
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+.temp/
+
+# Editor directories and files
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# Playwright
+playwright-report/
+playwright/.cache/
+test-results/
