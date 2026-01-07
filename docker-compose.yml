@@ -123,6 +123,50 @@ services:
         reservations:
           memory: 2G
 
+  # ---------------------------------------------------------------------------
+  # SIP Bridge Service (Legacy PBX Integration)
+  # ---------------------------------------------------------------------------
+  # This service compiles PJSIP from source and provides SIP registration
+  # capabilities for AI agents to connect to external PBX systems.
+  # ---------------------------------------------------------------------------
+  sip-bridge:
+    build:
+      context: ./apps/sip-bridge
+      dockerfile: Dockerfile
+    container_name: voxnexus-sip-bridge
+    restart: unless-stopped
+    environment:
+      SIP_BRIDGE_PORT: 8890
+      DATABASE_URL: postgresql://${POSTGRES_USER:-voxnexus}:${POSTGRES_PASSWORD:-voxnexus_dev}@postgres:5432/${POSTGRES_DB:-voxnexus}
+      REDIS_URL: redis://redis:6379
+      LIVEKIT_URL: ${LIVEKIT_URL}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SIP_LOCAL_PORT_START: 5060
+      SIP_USER_AGENT: VoxNexus-SIPBridge/1.0
+    ports:
+      - "8890:8890"           # HTTP API / Health
+      - "5060-5080:5060-5080/udp"  # SIP UDP ports
+      - "5060-5080:5060-5080/tcp"  # SIP TCP ports
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8890/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    networks:
+      - voxnexus-network
+    # SIP requires specific networking for proper NAT traversal
+    # In production, consider using host network mode or configuring STUN/TURN
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
 # -----------------------------------------------------------------------------
 # Networks
 # -----------------------------------------------------------------------------

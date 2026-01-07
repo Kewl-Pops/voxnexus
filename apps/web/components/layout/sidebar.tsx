@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS } from "@/lib/constants";
@@ -13,12 +14,16 @@ export function Sidebar() {
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 border-r bg-card">
       <div className="flex h-full flex-col">
         {/* Logo */}
-        <div className="flex h-16 items-center border-b px-6">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-              <Icons.Mic size={18} className="text-primary-foreground" />
-            </div>
-            <span className="text-xl font-bold">VoxNexus</span>
+        <div className="flex h-20 items-center justify-center border-b bg-slate-900 px-2">
+          <Link href="/dashboard" className="flex items-center">
+            <Image
+              src="/logo.jpg"
+              alt="VoxNexus"
+              width={220}
+              height={102}
+              className="h-14 w-auto"
+              priority
+            />
           </Link>
         </div>
 

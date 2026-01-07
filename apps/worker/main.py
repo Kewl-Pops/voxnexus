@@ -1327,6 +1327,91 @@ You have access to a knowledge base with uploaded documents.
 When users ask questions that might be answered by the knowledge base, use the search_knowledge_base function to find relevant information.
 Always cite the source document when providing information from the knowledge base."""
 
+# Visual Voice prompt suffix
+VISUAL_VOICE_PROMPT_SUFFIX = """
+
+You have access to Visual Voice capabilities to show UI components on the user's screen.
+Use push_ui to display:
+- 'calendar' - When the user needs to select a date or schedule an appointment
+- 'form' - When you need to collect structured information (name, email, etc.)
+- 'map' - When showing a location or address
+- 'confirm' - When you need yes/no confirmation from the user
+- 'list' - When presenting multiple options for the user to choose from
+
+After calling push_ui, wait for the user's response before continuing."""
+
+
+# =============================================================================
+# Visual Voice Tool Definition
+# =============================================================================
+
+PUSH_UI_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "push_ui",
+        "description": "Display a visual UI component on the user's screen. Use this to collect dates, forms, show locations, or present choices.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "component": {
+                    "type": "string",
+                    "enum": ["calendar", "form", "map", "confirm", "list"],
+                    "description": "The type of component to display",
+                },
+                "props": {
+                    "type": "object",
+                    "description": "Properties for the component. For calendar: {title}. For form: {title, description, fields: [{name, label, type, required}]}. For map: {title, address}. For confirm: {title, message}. For list: {title, items: [{id, label, description}]}",
+                },
+            },
+            "required": ["component", "props"],
+        },
+    },
+}
+
+
+# Global room reference for push_ui
+_current_room = None
+
+
+async def execute_push_ui(component: str, props: dict) -> str:
+    """
+    Push a visual UI component to the user's screen via LiveKit data channel.
+
+    Args:
+        component: Type of component (calendar, form, map, confirm, list)
+        props: Properties/configuration for the component
+
+    Returns:
+        Confirmation message
+    """
+    global _current_room
+
+    if not _current_room:
+        return "Visual UI not available - no active room connection."
+
+    import json
+    import uuid
+
+    message = {
+        "type": "show_component",
+        "component": component,
+        "props": props,
+        "id": str(uuid.uuid4()),
+    }
+
+    try:
+        # Publish data to the "visual_ui" topic
+        await _current_room.local_participant.publish_data(
+            json.dumps(message).encode("utf-8"),
+            topic="visual_ui",
+        )
+
+        logger.info(f"Pushed visual UI: {component}")
+        return f"Displayed {component} component on user's screen. Wait for their response."
+    except Exception as e:
+        logger.error(f"Failed to push visual UI: {e}")
+        return f"Failed to display UI: {str(e)}"
+
 
 async def check_agent_has_knowledge(agent_id: str) -> bool:
     """Check if an agent has any knowledge documents."""
@@ -1370,10 +1455,15 @@ def _get_livekit_server() -> AgentServer:
 
 async def agent_entrypoint(ctx: JobContext):
     """Entry point for each LiveKit room session."""
+    global _current_room
+
     logger.info(f"Agent joining room: {ctx.room.name}")
 
     # Wait for a participant to connect
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+
+    # Store room reference for Visual Voice
+    _current_room = ctx.room
 
     # Get agent config from room metadata
     agent_id = None
@@ -1395,6 +1485,9 @@ async def agent_entrypoint(ctx: JobContext):
         except (json.JSONDecodeError, TypeError):
             pass
 
+    # Always add Visual Voice capabilities
+    system_prompt += VISUAL_VOICE_PROMPT_SUFFIX
+
     # Initialize the Voice Agent
     # Use aiapi for LLM if configured, otherwise use OpenAI directly
     ai_api_url = os.getenv("AI_API_URL")
@@ -1414,12 +1507,29 @@ async def agent_entrypoint(ctx: JobContext):
         logger.info("Using OpenAI directly")
         llm_instance = openai.LLM(model="gpt-4o")
 
+    # Define the push_ui tool function for the agent
+    from livekit.agents import function_tool
+
+    @function_tool
+    async def push_ui(component: str, props: dict) -> str:
+        """Display a visual UI component on the user's screen.
+
+        Args:
+            component: Type of component - 'calendar', 'form', 'map', 'confirm', or 'list'
+            props: Properties for the component (title, fields, items, etc.)
+
+        Returns:
+            Confirmation message
+        """
+        return await execute_push_ui(component, props)
+
     agent = Agent(
         instructions=system_prompt,
         vad=silero.VAD.load(),
         stt=openai.STT(),
         llm=llm_instance,
         tts=openai.TTS(voice="alloy"),
+        tools=[push_ui],  # Register Visual Voice tool
     )
 
     # Create and start the agent session
@@ -1433,7 +1543,7 @@ async def agent_entrypoint(ctx: JobContext):
     greeting += " How can I help you today?"
     await session.say(greeting)
 
-    logger.info(f"Agent active in room: {ctx.room.name} (knowledge_base={has_knowledge_base})")
+    logger.info(f"Agent active in room: {ctx.room.name} (knowledge_base={has_knowledge_base}, visual_voice=True)")
 
 
 def run_livekit_worker():

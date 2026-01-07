@@ -120,6 +120,7 @@ model AgentConfig {
   conversations      Conversation[]
   usageLogs          UsageLog[]
   knowledgeDocuments KnowledgeDocument[]
+  sipDevices         SipDevice[]
 
   @@index([organizationId])
   @@index([isActive])
@@ -311,4 +312,86 @@ model KnowledgeDocument {
   @@index([status])
   @@index([filename])
   @@map("knowledge_documents")
+}
+
+// =============================================================================
+// SIP/Telephony Integration
+// =============================================================================
+
+enum SipDeviceStatus {
+  REGISTERED
+  FAILED
+  OFFLINE
+}
+
+model SipDevice {
+  id            String          @id @default(uuid())
+  agentConfigId String          @map("agent_config_id")
+
+  // SIP Registration credentials
+  server        String          // SIP server hostname (e.g., sip.company.com)
+  username      String          // SIP extension/username
+  password      String          // SIP password (encrypted at rest via app layer)
+  port          Int             @default(5060)
+  transport     String          @default("udp") // udp, tcp, tls
+
+  // Registration state
+  status        SipDeviceStatus @default(OFFLINE)
+  lastError     String?         @map("last_error")
+  registeredAt  DateTime?       @map("registered_at")
+
+  // Display name for caller ID
+  displayName   String?         @map("display_name")
+
+  // Additional SIP settings
+  realm         String?         // Authentication realm (usually same as server)
+  outboundProxy String?         @map("outbound_proxy")
+
+  metadata      Json            @default("{}")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  agent     AgentConfig @relation(fields: [agentConfigId], references: [id], onDelete: Cascade)
+  callLogs  SipCallLog[]
+
+  @@unique([server, username]) // Prevent duplicate registrations
+  @@index([agentConfigId])
+  @@index([status])
+  @@map("sip_devices")
+}
+
+model SipCallLog {
+  id           String   @id @default(uuid())
+  sipDeviceId  String   @map("sip_device_id")
+
+  // Call details
+  callId       String   @map("call_id") // SIP Call-ID header
+  direction    String   // inbound, outbound
+  remoteUri    String   @map("remote_uri") // sip:caller@domain
+  remoteName   String?  @map("remote_name") // Caller ID name
+
+  // LiveKit integration
+  livekitRoom  String?  @map("livekit_room") // Room name for bridging
+
+  // Call state
+  status       String   @default("ringing") // ringing, answered, completed, failed, missed
+  startedAt    DateTime @default(now()) @map("started_at")
+  answeredAt   DateTime? @map("answered_at")
+  endedAt      DateTime? @map("ended_at")
+  durationSecs Int?     @map("duration_secs")
+
+  // Termination reason
+  hangupCause  String?  @map("hangup_cause")
+
+  metadata     Json     @default("{}")
+
+  // Relations
+  sipDevice SipDevice @relation(fields: [sipDeviceId], references: [id], onDelete: Cascade)
+
+  @@index([sipDeviceId])
+  @@index([callId])
+  @@index([status])
+  @@index([startedAt])
+  @@map("sip_call_logs")
 }

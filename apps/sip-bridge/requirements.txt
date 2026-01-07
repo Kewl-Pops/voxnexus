@@ -1,0 +1,29 @@
+# =============================================================================
+# VoxNexus SIP Bridge - Python Dependencies
+# =============================================================================
+
+# HTTP API
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# Database
+asyncpg>=0.29.0
+sqlalchemy[asyncio]>=2.0.0
+
+# Redis for pub/sub
+redis>=5.0.0
+aioredis>=2.0.0
+
+# LiveKit integration
+livekit-api>=0.6.0
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Logging
+structlog>=24.0.0
+
+# HTTP client
+httpx>=0.26.0

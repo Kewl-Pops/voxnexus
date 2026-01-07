@@ -11,6 +11,7 @@ import {
 } from "@livekit/components-react";
 import { ConnectionState, Track } from "livekit-client";
 import "@livekit/components-styles";
+import { VisualViewport } from "@/components/visual-voice/visual-viewport";
 
 interface VoiceSessionProps {
   agentId: string;
@@ -133,10 +134,16 @@ export function VoiceSession({ agentId, agentName }: VoiceSessionProps) {
       onDisconnected={disconnect}
       audio={true}
       video={false}
-      className="bg-gray-900 rounded-xl overflow-hidden"
+      className="bg-gray-900 rounded-xl overflow-hidden relative"
     >
       <ActiveSession agentName={agentName} onDisconnect={disconnect} />
       <RoomAudioRenderer />
+      {/* Visual Voice Viewport - receives UI components from the agent */}
+      <VisualViewport
+        onResponse={(data) => {
+          console.log("Visual Voice response:", data);
+        }}
+      />
     </LiveKitRoom>
   );
 }
