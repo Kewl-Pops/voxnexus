@@ -92,7 +92,7 @@ export default function HomePage() {
                 </svg>
                 <span className="hidden sm:inline">GitHub</span>
               </a>
-              <Link href="/about" className="text-slate-300 hover:text-white transition-colors">
+              <Link href="https://cothink.pro/about" target="_blank" rel="noopener noreferrer" className="text-slate-300 hover:text-white transition-colors">
                 About
               </Link>
               <Link href="/pricing" className="text-slate-300 hover:text-white transition-colors">
@@ -506,7 +506,7 @@ export default function HomePage() {
               <h3 className="text-white font-semibold mb-4">Company</h3>
               <ul className="space-y-2 text-sm">
                 <li>
-                  <a href="https://cothink.io" className="text-slate-400 hover:text-white transition-colors">
+                  <a href="https://cothink.pro/about" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">
                     About Cothink
                   </a>
                 </li>
