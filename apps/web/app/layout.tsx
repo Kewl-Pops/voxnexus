@@ -147,6 +147,9 @@ export default function RootLayout({
         <link rel="dns-prefetch" href="https://api.anthropic.com" />
         <link rel="dns-prefetch" href="https://api.deepgram.com" />
 
+        {/* RSS Feed */}
+        <link rel="alternate" type="application/rss+xml" title="VoxNexus Updates" href="/feed.xml" />
+
         {/* JSON-LD Structured Data */}
         <JsonLd type="all" />
       </head>

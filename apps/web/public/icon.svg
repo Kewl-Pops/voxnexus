@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f172a"/>
+      <stop offset="100%" style="stop-color:#1e293b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#10b981"/>
+      <stop offset="100%" style="stop-color:#34d399"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- Voice wave bars -->
+  <g fill="url(#accent)">
+    <!-- Left bars -->
+    <rect x="96" y="200" width="24" height="112" rx="12"/>
+    <rect x="136" y="160" width="24" height="192" rx="12"/>
+    <rect x="176" y="128" width="24" height="256" rx="12"/>
+    <!-- Center bar (tallest) -->
+    <rect x="244" y="96" width="24" height="320" rx="12"/>
+    <!-- Right bars -->
+    <rect x="312" y="128" width="24" height="256" rx="12"/>
+    <rect x="352" y="160" width="24" height="192" rx="12"/>
+    <rect x="392" y="200" width="24" height="112" rx="12"/>
+  </g>
+  <!-- V letter accent -->
+  <path d="M168 420 L256 460 L344 420" stroke="#ffffff" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
