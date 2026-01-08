@@ -16,6 +16,35 @@ datasource db {
 }
 
 // =============================================================================
+// Plans & Pricing
+// =============================================================================
+
+enum PlanType {
+  FREE
+  STARTER
+  PRO
+  BUSINESS
+  AGENCY
+}
+
+enum BillingCycle {
+  MONTHLY
+  ANNUAL
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  TRIALING
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+// =============================================================================
 // Multi-Tenancy: Organizations & Users
 // =============================================================================
 
@@ -23,18 +52,148 @@ model Organization {
   id        String   @id @default(uuid())
   name      String
   slug      String   @unique
-  plan      String   @default("free") // free, pro, enterprise
-  metadata  Json     @default("{}")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  // Relations
-  users       OrganizationUser[]
-  agents      AgentConfig[]
-  apiKeys     ApiKey[]
-  usageLogs   UsageLog[]
+  // Parent organization (for agency sub-accounts)
+  parentId  String?  @map("parent_id")
+  parent    Organization?  @relation("SubAccounts", fields: [parentId], references: [id], onDelete: Cascade)
+  subAccounts Organization[] @relation("SubAccounts")
 
+  // Stripe integration
+  stripeCustomerId     String?  @unique @map("stripe_customer_id")
+  stripeSubscriptionId String?  @unique @map("stripe_subscription_id")
+
+  // Settings
+  metadata  Json     @default("{}")
+
+  // Relations
+  users              OrganizationUser[]
+  agents             AgentConfig[]
+  apiKeys            ApiKey[]
+  usageLogs          UsageLog[]
+  subscription       Subscription?
+  whiteLabelConfig   WhiteLabelConfig?
+  customDomain       CustomDomain?
+  providerCredentials ProviderCredential[]
+
+  @@index([parentId])
   @@map("organizations")
+}
+
+// =============================================================================
+// Subscriptions & Billing
+// =============================================================================
+
+model Subscription {
+  id             String             @id @default(uuid())
+  organizationId String             @unique @map("organization_id")
+
+  // Plan details
+  plan           PlanType           @default(FREE)
+  billingCycle   BillingCycle       @default(MONTHLY) @map("billing_cycle")
+  status         SubscriptionStatus @default(ACTIVE)
+
+  // Usage limits (per billing period)
+  agentLimit     Int                @default(1) @map("agent_limit")      // -1 = unlimited
+  minuteLimit    Int                @default(500) @map("minute_limit")   // -1 = unlimited
+  sipDeviceLimit Int                @default(1) @map("sip_device_limit") // -1 = unlimited
+  subAccountLimit Int               @default(0) @map("sub_account_limit") // 0 = none, -1 = unlimited
+
+  // Usage tracking (current period)
+  minutesUsed    Int                @default(0) @map("minutes_used")
+
+  // BYOK (Bring Your Own Keys) - if false, use platform managed keys
+  byokEnabled    Boolean            @default(true) @map("byok_enabled")
+
+  // Overage pricing (in cents per unit)
+  overageRatePerMinute Int          @default(2) @map("overage_rate_per_minute") // $0.02 default
+
+  // Billing period
+  currentPeriodStart DateTime       @map("current_period_start")
+  currentPeriodEnd   DateTime       @map("current_period_end")
+
+  // Trial
+  trialEndsAt    DateTime?          @map("trial_ends_at")
+
+  // Cancellation
+  cancelledAt    DateTime?          @map("cancelled_at")
+  cancelsAt      DateTime?          @map("cancels_at") // End of current period
+
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+// =============================================================================
+// White-Label Configuration (Agency Tier)
+// =============================================================================
+
+model WhiteLabelConfig {
+  id             String   @id @default(uuid())
+  organizationId String   @unique @map("organization_id")
+
+  // Branding
+  logoUrl        String?  @map("logo_url")
+  faviconUrl     String?  @map("favicon_url")
+  brandName      String?  @map("brand_name")
+
+  // Colors (hex values)
+  primaryColor   String   @default("#10b981") @map("primary_color")   // Emerald
+  accentColor    String   @default("#3b82f6") @map("accent_color")    // Blue
+
+  // Custom CSS (advanced customization)
+  customCss      String?  @map("custom_css") @db.Text
+
+  // Email branding
+  emailFromName  String?  @map("email_from_name")
+  emailFromEmail String?  @map("email_from_email")
+
+  // Footer/Legal
+  footerText     String?  @map("footer_text")
+  privacyUrl     String?  @map("privacy_url")
+  termsUrl       String?  @map("terms_url")
+
+  // Feature flags
+  hidePoweredBy  Boolean  @default(false) @map("hide_powered_by")
+
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("white_label_configs")
+}
+
+// =============================================================================
+// Custom Domains (Agency Tier)
+// =============================================================================
+
+model CustomDomain {
+  id             String   @id @default(uuid())
+  organizationId String   @unique @map("organization_id")
+
+  // Domain configuration
+  domain         String   @unique  // e.g., agents.myagency.com
+
+  // SSL/Verification status
+  verified       Boolean  @default(false)
+  verificationToken String? @map("verification_token")
+  sslStatus      String   @default("pending") @map("ssl_status") // pending, active, failed
+
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([domain])
+  @@map("custom_domains")
 }
 
 model User {
@@ -44,13 +203,15 @@ model User {
   avatarUrl     String?  @map("avatar_url")
   passwordHash  String?  @map("password_hash")
   emailVerified Boolean  @default(false) @map("email_verified")
+  role          UserRole @default(USER)
   metadata      Json     @default("{}")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   // Relations
-  organizations OrganizationUser[]
-  sessions      Session[]
+  organizations       OrganizationUser[]
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
 
   @@map("users")
 }
@@ -82,6 +243,22 @@ model Session {
 
   @@index([token])
   @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 // =============================================================================
@@ -282,6 +459,9 @@ model ProviderCredential {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   @@unique([organizationId, provider, credentialType])
   @@index([organizationId])
   @@map("provider_credentials")
@@ -343,6 +523,9 @@ model SipDevice {
   // Display name for caller ID
   displayName   String?         @map("display_name")
 
+  // Greeting message spoken when call is answered
+  greetingText  String?         @map("greeting_text") @db.Text
+
   // Additional SIP settings
   realm         String?         // Authentication realm (usually same as server)
   outboundProxy String?         @map("outbound_proxy")
@@ -394,4 +577,37 @@ model SipCallLog {
   @@index([status])
   @@index([startedAt])
   @@map("sip_call_logs")
+}
+
+// =============================================================================
+// Web Analytics (Self-Hosted)
+// =============================================================================
+
+model WebEvent {
+  id          String   @id @default(uuid())
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Page information
+  path        String   // e.g., "/pricing"
+  referrer    String?  // e.g., "linkedin.com"
+
+  // Visitor tracking (anonymized)
+  visitorHash String   @map("visitor_hash") // SHA256(IP + UA + Date) for daily uniques
+
+  // Device information
+  userAgent   String?  @map("user_agent")
+  deviceType  String?  @map("device_type") // mobile, tablet, desktop
+
+  // Optional: Country/Region from IP (if geo lookup enabled)
+  country     String?
+  region      String?
+
+  // Session tracking
+  sessionId   String?  @map("session_id")
+
+  @@index([createdAt])
+  @@index([path])
+  @@index([visitorHash])
+  @@index([referrer])
+  @@map("web_events")
 }

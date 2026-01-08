@@ -36,21 +36,33 @@ async function main() {
     },
   });
 
-  // Create default organization
+  // Create default organization with FREE subscription
+  const now = new Date();
+  const periodEnd = new Date(now);
+  periodEnd.setMonth(periodEnd.getMonth() + 1);
+
   const org = await prisma.organization.create({
     data: {
       name: "My Organization",
       slug: `org-${user.id.slice(0, 8)}`,
-      plan: "free",
-    },
-  });
-
-  // Link user to organization
-  await prisma.organizationUser.create({
-    data: {
-      userId: user.id,
-      organizationId: org.id,
-      role: "owner",
+      users: {
+        create: {
+          userId: user.id,
+          role: "owner",
+        },
+      },
+      subscription: {
+        create: {
+          plan: "FREE",
+          status: "ACTIVE",
+          agentLimit: -1,
+          minuteLimit: -1,
+          sipDeviceLimit: -1,
+          subAccountLimit: 0,
+          currentPeriodStart: now,
+          currentPeriodEnd: periodEnd,
+        },
+      },
     },
   });
 

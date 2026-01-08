@@ -43,6 +43,19 @@ interface SipDevice {
   greetingText?: string;
 }
 
+interface Webhook {
+  id: string;
+  name: string;
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  secret?: string;
+  isActive: boolean;
+  timeoutMs: number;
+  retryCount: number;
+  createdAt: string;
+}
+
 export default function AgentDetailPage() {
   const router = useRouter();
   const params = useParams();
@@ -67,6 +80,19 @@ export default function AgentDetailPage() {
   });
   const [editingGreeting, setEditingGreeting] = useState<string | null>(null);
   const [greetingText, setGreetingText] = useState("");
+
+  // Webhook state
+  const [webhooks, setWebhooks] = useState<Webhook[]>([]);
+  const [webhookLoading, setWebhookLoading] = useState(false);
+  const [webhookSaving, setWebhookSaving] = useState(false);
+  const [showWebhookForm, setShowWebhookForm] = useState(false);
+  const [editingWebhook, setEditingWebhook] = useState<Webhook | null>(null);
+  const [webhookForm, setWebhookForm] = useState({
+    name: "",
+    url: "",
+    method: "POST",
+    secret: "",
+  });
 
   useEffect(() => {
     async function fetchAgent() {
@@ -237,6 +263,114 @@ export default function AgentDetailPage() {
     } catch (error) {
       console.error("Failed to update greeting:", error);
       alert("Failed to update greeting");
+    }
+  };
+
+  // Fetch webhooks when webhooks tab is active
+  useEffect(() => {
+    if (activeTab === "webhooks" && params.id) {
+      fetchWebhooks();
+    }
+  }, [activeTab, params.id]);
+
+  const fetchWebhooks = async () => {
+    setWebhookLoading(true);
+    try {
+      const response = await fetch(`/api/agents/${params.id}/webhooks`);
+      if (response.ok) {
+        const data = await response.json();
+        setWebhooks(data.data || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch webhooks:", error);
+    } finally {
+      setWebhookLoading(false);
+    }
+  };
+
+  const handleAddWebhook = () => {
+    setEditingWebhook(null);
+    setWebhookForm({ name: "", url: "", method: "POST", secret: "" });
+    setShowWebhookForm(true);
+  };
+
+  const handleEditWebhook = (webhook: Webhook) => {
+    setEditingWebhook(webhook);
+    setWebhookForm({
+      name: webhook.name,
+      url: webhook.url,
+      method: webhook.method,
+      secret: webhook.secret || "",
+    });
+    setShowWebhookForm(true);
+  };
+
+  const handleSaveWebhook = async () => {
+    if (!webhookForm.name || !webhookForm.url) {
+      alert("Name and URL are required");
+      return;
+    }
+    setWebhookSaving(true);
+    try {
+      const url = editingWebhook
+        ? `/api/agents/${params.id}/webhooks/${editingWebhook.id}`
+        : `/api/agents/${params.id}/webhooks`;
+      const method = editingWebhook ? "PATCH" : "POST";
+
+      const response = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: webhookForm.name,
+          url: webhookForm.url,
+          method: webhookForm.method,
+          secret: webhookForm.secret || null,
+        }),
+      });
+
+      if (response.ok) {
+        setShowWebhookForm(false);
+        setEditingWebhook(null);
+        setWebhookForm({ name: "", url: "", method: "POST", secret: "" });
+        fetchWebhooks();
+      } else {
+        const error = await response.json();
+        alert(error.error || "Failed to save webhook");
+      }
+    } catch (error) {
+      console.error("Failed to save webhook:", error);
+      alert("Failed to save webhook");
+    } finally {
+      setWebhookSaving(false);
+    }
+  };
+
+  const handleDeleteWebhook = async (webhookId: string) => {
+    if (!confirm("Are you sure you want to delete this webhook?")) return;
+    try {
+      const response = await fetch(`/api/agents/${params.id}/webhooks/${webhookId}`, {
+        method: "DELETE",
+      });
+      if (response.ok) {
+        fetchWebhooks();
+      }
+    } catch (error) {
+      console.error("Failed to delete webhook:", error);
+    }
+  };
+
+  const handleToggleWebhook = async (webhook: Webhook) => {
+    try {
+      const response = await fetch(`/api/agents/${params.id}/webhooks/${webhook.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !webhook.isActive }),
+      });
+      if (response.ok) {
+        fetchWebhooks();
+      }
+    } catch (error) {
+      console.error("Failed to toggle webhook:", error);
     }
   };
 
@@ -529,6 +663,78 @@ export default function AgentDetailPage() {
 
         {activeTab === "webhooks" && (
           <div className="max-w-2xl space-y-6">
+            {/* Add/Edit Webhook Form */}
+            {showWebhookForm && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>{editingWebhook ? "Edit Webhook" : "Add Webhook"}</CardTitle>
+                  <CardDescription>
+                    {editingWebhook ? "Update the webhook configuration" : "Create a new webhook endpoint for tool calling"}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Name</Label>
+                      <Input
+                        placeholder="e.g., Check Inventory"
+                        value={webhookForm.name}
+                        onChange={(e) => setWebhookForm({ ...webhookForm, name: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Method</Label>
+                      <Select
+                        value={webhookForm.method}
+                        onChange={(e) => setWebhookForm({ ...webhookForm, method: e.target.value })}
+                      >
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                        <option value="PUT">PUT</option>
+                        <option value="PATCH">PATCH</option>
+                        <option value="DELETE">DELETE</option>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>URL</Label>
+                    <Input
+                      placeholder="https://api.example.com/webhook"
+                      value={webhookForm.url}
+                      onChange={(e) => setWebhookForm({ ...webhookForm, url: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Secret (optional)</Label>
+                    <Input
+                      type="password"
+                      placeholder="Webhook signing secret"
+                      value={webhookForm.secret}
+                      onChange={(e) => setWebhookForm({ ...webhookForm, secret: e.target.value })}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Used to sign webhook payloads for verification
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button onClick={handleSaveWebhook} loading={webhookSaving}>
+                      {editingWebhook ? "Update Webhook" : "Create Webhook"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setShowWebhookForm(false);
+                        setEditingWebhook(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Webhooks List */}
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
@@ -537,19 +743,106 @@ export default function AgentDetailPage() {
                     Configure webhooks for tool calling
                   </CardDescription>
                 </div>
-                <Button size="sm">
-                  <Icons.Plus size={16} className="mr-2" />
-                  Add Webhook
-                </Button>
+                {!showWebhookForm && (
+                  <Button size="sm" onClick={handleAddWebhook}>
+                    <Icons.Plus size={16} className="mr-2" />
+                    Add Webhook
+                  </Button>
+                )}
               </CardHeader>
               <CardContent>
-                <div className="flex flex-col items-center justify-center py-8 text-center">
-                  <Icons.Zap size={48} className="text-muted-foreground mb-4" />
-                  <p className="text-muted-foreground">No webhooks configured yet.</p>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Add webhooks to enable tool calling capabilities.
-                  </p>
-                </div>
+                {webhookLoading ? (
+                  <div className="flex justify-center py-8">
+                    <Icons.Loader size={24} className="animate-spin text-muted-foreground" />
+                  </div>
+                ) : webhooks.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <Icons.Zap size={48} className="text-muted-foreground mb-4" />
+                    <p className="text-muted-foreground">No webhooks configured yet.</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Add webhooks to enable tool calling capabilities.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {webhooks.map((webhook) => (
+                      <div
+                        key={webhook.id}
+                        className="flex items-center justify-between rounded-lg border p-4"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+                            <Icons.Zap size={20} />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium">{webhook.name}</p>
+                              <Badge variant={webhook.isActive ? "success" : "secondary"}>
+                                {webhook.isActive ? "Active" : "Inactive"}
+                              </Badge>
+                            </div>
+                            <p className="text-sm text-muted-foreground">
+                              <span className="font-mono text-xs bg-muted px-1 rounded mr-2">
+                                {webhook.method}
+                              </span>
+                              {webhook.url}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleToggleWebhook(webhook)}
+                          >
+                            {webhook.isActive ? (
+                              <Icons.X size={16} className="text-muted-foreground" />
+                            ) : (
+                              <Icons.Check size={16} className="text-muted-foreground" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleEditWebhook(webhook)}
+                          >
+                            <Icons.Edit size={16} className="text-muted-foreground" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteWebhook(webhook.id)}
+                          >
+                            <Icons.Trash size={16} className="text-muted-foreground" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* How Webhooks Work */}
+            <Card>
+              <CardHeader>
+                <CardTitle>How Webhooks Work</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-muted-foreground">
+                <p>
+                  Webhooks enable your AI agent to call external APIs during conversations.
+                  When configured, the agent can trigger these webhooks as &quot;tools&quot; to fetch
+                  real-time data or perform actions.
+                </p>
+                <p>
+                  <strong>Example use cases:</strong> Check inventory, book appointments,
+                  look up customer information, process orders, or integrate with any API.
+                </p>
+                <p>
+                  The webhook payload will include the conversation context and any parameters
+                  extracted from the user&apos;s request. Responses should be JSON and will be
+                  used by the agent to continue the conversation.
+                </p>
               </CardContent>
             </Card>
           </div>

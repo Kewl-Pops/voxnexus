@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ interface KnowledgeBaseProps {
 
 export function KnowledgeBase({ agentId }: KnowledgeBaseProps) {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -197,18 +198,21 @@ export function KnowledgeBase({ agentId }: KnowledgeBaseProps) {
                 <p className="text-sm text-muted-foreground mb-2">
                   Drag and drop a PDF or text file here, or
                 </p>
-                <label>
-                  <input
-                    type="file"
-                    className="hidden"
-                    accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
-                    onChange={handleFileSelect}
-                    disabled={uploading}
-                  />
-                  <Button variant="outline" className="cursor-pointer">
-                    Browse Files
-                  </Button>
-                </label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
+                  onChange={handleFileSelect}
+                  disabled={uploading}
+                />
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  Browse Files
+                </Button>
                 <p className="text-xs text-muted-foreground mt-3">
                   Supported: PDF, TXT, Markdown
                 </p>

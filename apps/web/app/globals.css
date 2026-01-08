@@ -4,44 +4,25 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 224 71% 4%;
-    --card: 0 0% 100%;
-    --card-foreground: 224 71% 4%;
-    --primary: 262 83% 58%;
-    --primary-foreground: 210 20% 98%;
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 220 9% 46%;
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
-    --accent: 220 14% 96%;
-    --accent-foreground: 220 9% 46%;
+    /* Dark slate theme matching marketing pages */
+    --background: 222 47% 5%;          /* slate-950 */
+    --foreground: 210 40% 98%;          /* white */
+    --card: 222 47% 11%;                /* slate-900 */
+    --card-foreground: 210 40% 98%;     /* white */
+    --primary: 160 84% 39%;             /* emerald-500 */
+    --primary-foreground: 210 40% 98%;  /* white */
+    --secondary: 217 33% 17%;           /* slate-800 */
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;               /* slate-800 */
+    --muted-foreground: 215 20% 65%;    /* slate-400 */
+    --accent: 217 33% 17%;              /* slate-800 */
+    --accent-foreground: 210 40% 98%;
     --destructive: 0 84% 60%;
-    --destructive-foreground: 210 20% 98%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 262 83% 58%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 33% 17%;              /* slate-800 */
+    --input: 217 33% 17%;               /* slate-800 */
+    --ring: 160 84% 39%;                /* emerald-500 */
     --radius: 0.5rem;
-  }
-
-  .dark {
-    --background: 224 71% 4%;
-    --foreground: 210 20% 98%;
-    --card: 224 71% 4%;
-    --card-foreground: 210 20% 98%;
-    --primary: 263 70% 50%;
-    --primary-foreground: 210 20% 98%;
-    --secondary: 215 28% 17%;
-    --secondary-foreground: 210 20% 98%;
-    --muted: 215 28% 17%;
-    --muted-foreground: 217 11% 65%;
-    --accent: 215 28% 17%;
-    --accent-foreground: 210 20% 98%;
-    --destructive: 0 62% 30%;
-    --destructive-foreground: 210 20% 98%;
-    --border: 215 28% 17%;
-    --input: 215 28% 17%;
-    --ring: 263 70% 50%;
   }
 }
 
@@ -52,6 +33,20 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+
+  /* Force dark color scheme for native form elements */
+  select,
+  input,
+  textarea {
+    color-scheme: dark;
+  }
+
+  /* Style native select options for dark mode */
+  select option {
+    background-color: hsl(222 47% 11%);
+    color: hsl(210 40% 98%);
+    padding: 8px;
   }
 }
 

@@ -41,3 +41,19 @@ export const NAV_ITEMS = [
   { name: "API Keys", href: "/api-keys", icon: "Key" },
   { name: "Settings", href: "/settings", icon: "Settings" },
 ] as const;
+
+// Agency-only nav items (shown when plan includes sub-accounts)
+export const AGENCY_NAV_ITEMS = [
+  { name: "Sub-Accounts", href: "/sub-accounts", icon: "Building" },
+  { name: "Branding", href: "/branding", icon: "Palette" },
+] as const;
+
+// Billing nav items
+export const BILLING_NAV_ITEMS = [
+  { name: "Billing", href: "/billing", icon: "CreditCard" },
+] as const;
+
+// Admin nav items (only shown for ADMIN role)
+export const ADMIN_NAV_ITEMS = [
+  { name: "Admin Dashboard", href: "/admin", icon: "Shield" },
+] as const;

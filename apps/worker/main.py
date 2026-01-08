@@ -1238,6 +1238,192 @@ async def execute_knowledge_search(agent_id: str, query: str) -> str:
 
 
 # =============================================================================
+# Dynamic Webhook Execution Engine
+# =============================================================================
+
+async def fetch_agent_webhooks(agent_id: str) -> list[dict]:
+    """
+    Fetch configured webhooks for an agent from the database.
+
+    Args:
+        agent_id: The agent's ID
+
+    Returns:
+        List of webhook definitions with name, url, method, description, secret
+    """
+    try:
+        import asyncpg
+    except ImportError:
+        raise ImportError("asyncpg not installed. Run: pip install asyncpg")
+
+    conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
+
+    try:
+        results = await conn.fetch(
+            """
+            SELECT id, name, url, method, headers, secret, timeout_ms, retry_count
+            FROM webhook_endpoints
+            WHERE agent_config_id = $1 AND is_active = true
+            ORDER BY created_at ASC
+            """,
+            agent_id,
+        )
+
+        webhooks = []
+        for row in results:
+            webhooks.append({
+                "id": str(row["id"]),
+                "name": row["name"],
+                "url": row["url"],
+                "method": row["method"] or "POST",
+                "headers": row["headers"] if row["headers"] else {},
+                "secret": row["secret"],
+                "timeout_ms": row["timeout_ms"] or 30000,
+                "retry_count": row["retry_count"] or 3,
+            })
+
+        logger.info(f"Fetched {len(webhooks)} webhooks for agent {agent_id}")
+        return webhooks
+    except Exception as e:
+        logger.error(f"Failed to fetch webhooks for agent {agent_id}: {e}")
+        return []
+    finally:
+        await conn.close()
+
+
+async def execute_webhook(
+    webhook: dict,
+    payload: dict,
+) -> str:
+    """
+    Execute a webhook HTTP request.
+
+    Args:
+        webhook: Webhook definition (url, method, headers, secret, timeout_ms)
+        payload: The data to send to the webhook
+
+    Returns:
+        Response text from the webhook or error message
+    """
+    import httpx
+    import json
+    import hashlib
+    import hmac
+
+    url = webhook["url"]
+    method = webhook["method"].upper()
+    timeout_ms = webhook.get("timeout_ms", 30000)
+    secret = webhook.get("secret")
+
+    # Prepare headers
+    headers = dict(webhook.get("headers", {}))
+    headers["Content-Type"] = "application/json"
+
+    # Sign payload if secret is configured
+    if secret:
+        payload_bytes = json.dumps(payload).encode("utf-8")
+        signature = hmac.new(
+            secret.encode("utf-8"),
+            payload_bytes,
+            hashlib.sha256
+        ).hexdigest()
+        headers["X-Webhook-Signature"] = f"sha256={signature}"
+
+    logger.info(f"Triggering webhook '{webhook['name']}' to {url} with payload {payload}")
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout_ms / 1000) as client:
+            if method == "GET":
+                response = await client.get(url, headers=headers, params=payload)
+            elif method == "POST":
+                response = await client.post(url, headers=headers, json=payload)
+            elif method == "PUT":
+                response = await client.put(url, headers=headers, json=payload)
+            elif method == "PATCH":
+                response = await client.patch(url, headers=headers, json=payload)
+            elif method == "DELETE":
+                response = await client.delete(url, headers=headers)
+            else:
+                return f"Unsupported HTTP method: {method}"
+
+            response.raise_for_status()
+
+            logger.info(f"Webhook '{webhook['name']}' succeeded with status {response.status_code}")
+
+            # Try to parse as JSON, otherwise return text
+            try:
+                result = response.json()
+                if isinstance(result, dict):
+                    return json.dumps(result, indent=2)
+                return str(result)
+            except json.JSONDecodeError:
+                return response.text or f"Webhook succeeded (status {response.status_code})"
+
+    except httpx.TimeoutException:
+        error_msg = f"Webhook '{webhook['name']}' timed out after {timeout_ms}ms"
+        logger.error(error_msg)
+        return error_msg
+    except httpx.HTTPStatusError as e:
+        error_msg = f"Webhook '{webhook['name']}' failed with status {e.response.status_code}: {e.response.text}"
+        logger.error(error_msg)
+        return error_msg
+    except Exception as e:
+        error_msg = f"Webhook '{webhook['name']}' failed: {str(e)}"
+        logger.error(error_msg)
+        return error_msg
+
+
+def create_webhook_tool(webhook: dict):
+    """
+    Create a LiveKit function_tool from a webhook definition.
+
+    The tool accepts dynamic keyword arguments which are sent as the JSON payload
+    to the webhook URL.
+
+    Args:
+        webhook: Webhook definition dict
+
+    Returns:
+        A function_tool that can be registered with the Agent
+    """
+    from livekit.agents import function_tool
+
+    # Create a unique function for this webhook to capture the webhook definition
+    async def webhook_handler(**kwargs) -> str:
+        """Execute the webhook with the provided parameters."""
+        return await execute_webhook(webhook, kwargs)
+
+    # Set the function name and docstring dynamically
+    webhook_handler.__name__ = webhook["name"].lower().replace(" ", "_").replace("-", "_")
+    webhook_handler.__doc__ = f"""Call the '{webhook['name']}' webhook.
+
+This webhook makes a {webhook['method']} request to an external API.
+Pass any relevant parameters as keyword arguments (e.g., name, email, date, etc.).
+The parameters will be sent as JSON in the request body.
+
+Returns:
+    The response from the external API.
+"""
+
+    # Create and return the function_tool
+    return function_tool(webhook_handler)
+
+
+# Prompt suffix for agents with webhooks
+WEBHOOK_PROMPT_SUFFIX = """
+
+You have access to external API webhooks that can perform actions like:
+- Looking up information in external systems
+- Creating or updating records
+- Checking availability or status
+- Processing requests
+
+When the user asks you to do something that requires external data or actions,
+use the appropriate webhook tool. Pass relevant information from the conversation
+as parameters to the webhook."""
+
+
+# =============================================================================
 # Redis Heartbeat
 # =============================================================================
 
@@ -1469,6 +1655,7 @@ async def agent_entrypoint(ctx: JobContext):
     agent_id = None
     system_prompt = DEFAULT_SYSTEM_PROMPT
     has_knowledge_base = False
+    webhooks = []
 
     if ctx.room.metadata:
         try:
@@ -1482,6 +1669,12 @@ async def agent_entrypoint(ctx: JobContext):
                 if has_knowledge_base:
                     logger.info(f"Agent {agent_id} has knowledge base enabled")
                     system_prompt = DEFAULT_SYSTEM_PROMPT + KB_SYSTEM_PROMPT_SUFFIX
+
+                # Fetch configured webhooks for this agent
+                webhooks = await fetch_agent_webhooks(agent_id)
+                if webhooks:
+                    logger.info(f"Agent {agent_id} has {len(webhooks)} webhook(s) configured")
+                    system_prompt += WEBHOOK_PROMPT_SUFFIX
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -1523,13 +1716,27 @@ async def agent_entrypoint(ctx: JobContext):
         """
         return await execute_push_ui(component, props)
 
+    # Build the tools list
+    tools = [push_ui]  # Always include Visual Voice tool
+
+    # Add dynamic webhook tools
+    for webhook in webhooks:
+        try:
+            webhook_tool = create_webhook_tool(webhook)
+            tools.append(webhook_tool)
+            logger.info(f"Registered webhook tool: {webhook['name']}")
+        except Exception as e:
+            logger.error(f"Failed to create webhook tool '{webhook['name']}': {e}")
+
+    logger.info(f"Agent initialized with {len(tools)} tool(s)")
+
     agent = Agent(
         instructions=system_prompt,
         vad=silero.VAD.load(),
         stt=openai.STT(),
         llm=llm_instance,
         tts=openai.TTS(voice="alloy"),
-        tools=[push_ui],  # Register Visual Voice tool
+        tools=tools,
     )
 
     # Create and start the agent session
@@ -1540,10 +1747,12 @@ async def agent_entrypoint(ctx: JobContext):
     greeting = "Hello! I'm Nexus, your AI assistant."
     if has_knowledge_base:
         greeting += " I have access to your knowledge base and can answer questions about your documents."
+    if webhooks:
+        greeting += f" I can also perform actions through {len(webhooks)} connected service{'s' if len(webhooks) > 1 else ''}."
     greeting += " How can I help you today?"
     await session.say(greeting)
 
-    logger.info(f"Agent active in room: {ctx.room.name} (knowledge_base={has_knowledge_base}, visual_voice=True)")
+    logger.info(f"Agent active in room: {ctx.room.name} (knowledge_base={has_knowledge_base}, webhooks={len(webhooks)}, visual_voice=True)")
 
 
 def run_livekit_worker():

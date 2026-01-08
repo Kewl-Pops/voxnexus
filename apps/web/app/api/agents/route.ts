@@ -55,11 +55,26 @@ export async function POST(request: NextRequest) {
 
     if (!org) {
       // Create a default organization if none exists
+      const now = new Date();
+      const periodEnd = new Date(now);
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+
       org = await prisma.organization.create({
         data: {
           name: "Cothink LLC",
           slug: "cothink",
-          plan: "pro",
+          subscription: {
+            create: {
+              plan: "PRO",
+              status: "ACTIVE",
+              agentLimit: 5,
+              minuteLimit: 2000,
+              sipDeviceLimit: 5,
+              subAccountLimit: 0,
+              currentPeriodStart: now,
+              currentPeriodEnd: periodEnd,
+            },
+          },
         },
       });
     }
