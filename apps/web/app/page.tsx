@@ -92,6 +92,9 @@ export default function HomePage() {
                 </svg>
                 <span className="hidden sm:inline">GitHub</span>
               </a>
+              <Link href="/about" className="text-slate-300 hover:text-white transition-colors">
+                About
+              </Link>
               <Link href="/pricing" className="text-slate-300 hover:text-white transition-colors">
                 Pricing
               </Link>
