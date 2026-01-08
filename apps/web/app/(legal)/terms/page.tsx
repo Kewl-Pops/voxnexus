@@ -370,7 +370,7 @@ export default function TermsPage() {
       <p>
         <strong>Cothink LLC</strong>
         <br />
-        Email: legal@cothink.xyz
+        Email: alberto@cothink.pro
         <br />
         Website: https://voxnexus.pro
       </p>

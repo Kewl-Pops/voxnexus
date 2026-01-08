@@ -227,7 +227,7 @@ export default function PrivacyPage() {
       <h3>4.3 Data Export</h3>
       <p>
         You may request an export of your data at any time by contacting us at
-        privacy@cothink.xyz.
+        alberto@cothink.pro.
       </p>
 
       <h2>5. Data Security</h2>
@@ -268,7 +268,7 @@ export default function PrivacyPage() {
         </li>
       </ul>
       <p>
-        To exercise these rights, contact us at privacy@cothink.xyz. We will
+        To exercise these rights, contact us at alberto@cothink.pro. We will
         respond within 30 days.
       </p>
 
@@ -333,16 +333,9 @@ export default function PrivacyPage() {
       <p>
         <strong>Cothink LLC</strong>
         <br />
-        Privacy Officer
-        <br />
-        Email: privacy@cothink.xyz
+        Email: alberto@cothink.pro
         <br />
         Website: https://voxnexus.pro
-      </p>
-      <p>
-        For general inquiries: support@cothink.xyz
-        <br />
-        For legal matters: legal@cothink.xyz
       </p>
 
       <div className="mt-12 pt-8 border-t border-slate-700">
