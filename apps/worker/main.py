@@ -101,10 +101,37 @@ def load_guardian_plugin() -> BaseGuardian | None:
 
     guardian_key = os.getenv("GUARDIAN_KEY")
 
-    try:
-        # Attempt to import the proprietary Guardian module
-        from voxnexus_guardian import Guardian
+    # Try to import Guardian from multiple sources:
+    # 1. Local plugins.guardian (development/integrated mode)
+    # 2. External voxnexus_guardian package (production distribution)
+    Guardian = None
 
+    try:
+        # First, try local plugins.guardian module
+        from plugins.guardian import Guardian as LocalGuardian
+        if LocalGuardian is not None:
+            Guardian = LocalGuardian
+            logger.debug("Loaded Guardian from local plugins")
+    except ImportError:
+        pass
+
+    if Guardian is None:
+        try:
+            # Fall back to external package
+            from voxnexus_guardian import Guardian as ExternalGuardian
+            Guardian = ExternalGuardian
+            logger.debug("Loaded Guardian from voxnexus_guardian package")
+        except ImportError:
+            pass
+
+    if Guardian is None:
+        # Guardian module not available
+        logger.info("🔓 Guardian Security Suite: NOT DETECTED")
+        logger.info("   Running in Open Source Mode")
+        logger.info("   Visit https://voxnexus.pro/guardian for enterprise features")
+        return None
+
+    try:
         config = GuardianConfig(
             api_key=guardian_key,
             auto_handoff_threshold=float(os.getenv("GUARDIAN_HANDOFF_THRESHOLD", "0.8")),
@@ -129,12 +156,6 @@ def load_guardian_plugin() -> BaseGuardian | None:
             _guardian_plugin = None
             return None
 
-    except ImportError:
-        # Guardian module not installed - this is expected for open-source users
-        logger.info("🔓 Guardian Security Suite: NOT DETECTED")
-        logger.info("   Running in Open Source Mode")
-        logger.info("   Visit https://voxnexus.pro/guardian for enterprise features")
-        return None
     except Exception as e:
         logger.error(f"Guardian initialization failed: {e}")
         return None

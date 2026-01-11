@@ -53,10 +53,13 @@ logs/
 #   pip install voxnexus-guardian --index-url https://pypi.voxnexus.pro/simple/
 # =============================================================================
 
-# Exclude any real Guardian implementation files (except _mock.py)
+# Exclude any real Guardian implementation files (except allowed ones)
+# NOTE: vox_guardian.py is included for development/testing
+# In production, Guardian would be distributed via private package
 plugins/guardian/*.py
 !plugins/guardian/__init__.py
 !plugins/guardian/_mock.py
+!plugins/guardian/vox_guardian.py
 
 # Exclude local Guardian development
 voxnexus_guardian/

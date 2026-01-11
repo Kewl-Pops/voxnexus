@@ -49,6 +49,9 @@ assemblyai = ["assemblyai>=0.20.0"]
 cartesia = ["cartesia>=0.1.0"]
 elevenlabs = ["elevenlabs>=1.0.0"]
 
+# Guardian Security Suite (Enterprise)
+guardian = ["vaderSentiment>=3.3.0"]
+
 # LiveKit integration
 livekit = [
     "livekit>=0.11.0",
