@@ -38,6 +38,12 @@ interface GuardianStatus {
     takeover: boolean;
   };
   version?: string;
+  stats?: {
+    activeSessions: number;
+    riskEvents: number;
+    humanTakeovers: number;
+    avgSentiment: number;
+  };
 }
 
 export function GuardianDashboard() {
@@ -57,7 +63,13 @@ export function GuardianDashboard() {
 
   useEffect(() => {
     checkGuardianStatus();
-    const interval = setInterval(checkGuardianStatus, 30000);
+    fetchSessions();
+    fetchEvents();
+    const interval = setInterval(() => {
+      checkGuardianStatus();
+      fetchSessions();
+      fetchEvents();
+    }, 10000); // Refresh every 10 seconds
     return () => clearInterval(interval);
   }, []);
 
@@ -81,9 +93,54 @@ export function GuardianDashboard() {
     }
   }
 
+  async function fetchSessions() {
+    try {
+      const response = await fetch("/api/admin/guardian/sessions?status=active&limit=20");
+      if (response.ok) {
+        const data = await response.json();
+        setSessions(data.sessions.map((s: Record<string, unknown>) => ({
+          id: s.id,
+          roomName: s.roomName,
+          agentName: "AI Agent",
+          startTime: new Date(s.startedAt as string),
+          sentiment: s.avgSentiment as number,
+          riskLevel: (s.maxRiskLevel as string).toLowerCase() as "low" | "medium" | "high" | "critical",
+          messageCount: s.messageCount as number,
+          humanActive: s.humanActive as boolean,
+        })));
+      }
+    } catch (error) {
+      console.error("Failed to fetch sessions:", error);
+    }
+  }
+
+  async function fetchEvents() {
+    try {
+      const response = await fetch("/api/admin/guardian/events?hours=24&limit=50");
+      if (response.ok) {
+        const data = await response.json();
+        setRiskEvents(data.events
+          .filter((e: Record<string, unknown>) =>
+            ["RISK_DETECTED", "KEYWORD_MATCH", "SENTIMENT_ALERT"].includes(e.eventType as string)
+          )
+          .map((e: Record<string, unknown>) => ({
+            id: e.id,
+            sessionId: e.sessionId,
+            timestamp: new Date(e.createdAt as string),
+            level: (e.riskLevel as string).toLowerCase() as "low" | "medium" | "high" | "critical",
+            keywords: e.keywords as string[],
+            category: e.category as string || "unknown",
+            text: e.text as string || "",
+          })));
+      }
+    } catch (error) {
+      console.error("Failed to fetch events:", error);
+    }
+  }
+
   async function handleRefresh() {
     setIsRefreshing(true);
-    await checkGuardianStatus();
+    await Promise.all([checkGuardianStatus(), fetchSessions(), fetchEvents()]);
     setIsRefreshing(false);
   }
 
@@ -290,7 +347,7 @@ export function GuardianDashboard() {
             <Icons.Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{sessions.length}</div>
+            <div className="text-2xl font-bold">{guardianStatus.stats?.activeSessions ?? sessions.length}</div>
             <p className="text-xs text-muted-foreground">Being monitored</p>
           </CardContent>
         </Card>
@@ -301,10 +358,8 @@ export function GuardianDashboard() {
             <Icons.Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {sessions.length > 0
-                ? (sessions.reduce((sum, s) => sum + s.sentiment, 0) / sessions.length).toFixed(2)
-                : "0.00"}
+            <div className={cn("text-2xl font-bold", getSentimentColor(guardianStatus.stats?.avgSentiment ?? 0))}>
+              {(guardianStatus.stats?.avgSentiment ?? 0).toFixed(2)}
             </div>
             <p className="text-xs text-muted-foreground">-1.0 to 1.0 scale</p>
           </CardContent>
@@ -316,7 +371,7 @@ export function GuardianDashboard() {
             <Icons.AlertCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{riskEvents.length}</div>
+            <div className="text-2xl font-bold">{guardianStatus.stats?.riskEvents ?? riskEvents.length}</div>
             <p className="text-xs text-muted-foreground">Last 24 hours</p>
           </CardContent>
         </Card>
@@ -328,7 +383,7 @@ export function GuardianDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {sessions.filter((s) => s.humanActive).length}
+              {guardianStatus.stats?.humanTakeovers ?? sessions.filter((s) => s.humanActive).length}
             </div>
             <p className="text-xs text-muted-foreground">Currently active</p>
           </CardContent>

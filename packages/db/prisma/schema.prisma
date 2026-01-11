@@ -580,6 +580,92 @@ model SipCallLog {
 }
 
 // =============================================================================
+// Guardian Security Suite
+// =============================================================================
+
+enum GuardianRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum GuardianEventType {
+  SESSION_START
+  SESSION_END
+  RISK_DETECTED
+  SENTIMENT_ALERT
+  HUMAN_TAKEOVER
+  KEYWORD_MATCH
+}
+
+model GuardianSession {
+  id            String              @id @default(uuid())
+  roomName      String              @map("room_name")
+  agentConfigId String?             @map("agent_config_id")
+
+  // Session state
+  status        String              @default("active") // active, completed, takeover
+  startedAt     DateTime            @default(now()) @map("started_at")
+  endedAt       DateTime?           @map("ended_at")
+
+  // Aggregated metrics
+  messageCount  Int                 @default(0) @map("message_count")
+  avgSentiment  Float               @default(0) @map("avg_sentiment")
+  minSentiment  Float               @default(0) @map("min_sentiment")
+  maxRiskLevel  GuardianRiskLevel   @default(LOW) @map("max_risk_level")
+
+  // Human takeover info
+  humanActive   Boolean             @default(false) @map("human_active")
+  takeoverAt    DateTime?           @map("takeover_at")
+  takeoverBy    String?             @map("takeover_by")
+
+  metadata      Json                @default("{}")
+
+  // Relations
+  events        GuardianEvent[]
+
+  @@index([roomName])
+  @@index([status])
+  @@index([startedAt])
+  @@map("guardian_sessions")
+}
+
+model GuardianEvent {
+  id          String              @id @default(uuid())
+  sessionId   String              @map("session_id")
+
+  // Event details
+  eventType   GuardianEventType   @map("event_type")
+  riskLevel   GuardianRiskLevel   @default(LOW) @map("risk_level")
+
+  // Sentiment data
+  sentiment   Float?              // -1.0 to 1.0
+
+  // Risk detection data
+  keywords    String[]            @default([])
+  category    String?             // e.g., "legal_threat", "escalation", "fraud"
+
+  // The text that triggered the event
+  text        String?             @db.Text
+
+  // Who triggered it (user, agent, system)
+  source      String              @default("user")
+
+  metadata    Json                @default("{}")
+  createdAt   DateTime            @default(now()) @map("created_at")
+
+  // Relations
+  session     GuardianSession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([eventType])
+  @@index([riskLevel])
+  @@index([createdAt])
+  @@map("guardian_events")
+}
+
+// =============================================================================
 // Web Analytics (Self-Hosted)
 // =============================================================================
 

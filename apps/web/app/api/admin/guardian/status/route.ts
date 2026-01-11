@@ -54,6 +54,36 @@ export async function GET() {
       // Check if Guardian is reported in the health response
       const guardianActive = health.guardian_active === true;
 
+      // Get stats from database
+      const now = new Date();
+      const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+      const [activeSessions, riskEvents, humanTakeovers, avgSentiment] = await Promise.all([
+        // Count active sessions
+        prisma.guardianSession.count({
+          where: { status: "active" },
+        }),
+        // Count risk events in last 24 hours
+        prisma.guardianEvent.count({
+          where: {
+            createdAt: { gte: twentyFourHoursAgo },
+            eventType: { in: ["RISK_DETECTED", "KEYWORD_MATCH", "SENTIMENT_ALERT"] },
+          },
+        }),
+        // Count active human takeovers
+        prisma.guardianSession.count({
+          where: { humanActive: true, status: "takeover" },
+        }),
+        // Calculate average sentiment from recent sessions
+        prisma.guardianSession.aggregate({
+          where: {
+            startedAt: { gte: twentyFourHoursAgo },
+            messageCount: { gt: 0 },
+          },
+          _avg: { avgSentiment: true },
+        }),
+      ]);
+
       return NextResponse.json({
         active: guardianActive,
         licensed: guardianActive,
@@ -64,6 +94,12 @@ export async function GET() {
         },
         version: health.guardian_version || null,
         worker_status: health.status,
+        stats: {
+          activeSessions,
+          riskEvents,
+          humanTakeovers,
+          avgSentiment: avgSentiment._avg.avgSentiment || 0,
+        },
       });
     } catch {
       return NextResponse.json({

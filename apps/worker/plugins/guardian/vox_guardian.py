@@ -22,9 +22,11 @@ import hashlib
 import logging
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+import httpx
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 # Import base interfaces from the open-source engine
@@ -120,6 +122,7 @@ def validate_license(api_key: Optional[str]) -> bool:
 @dataclass
 class SessionMetrics:
     """Metrics tracking for a Guardian session."""
+    session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     start_time: float = field(default_factory=time.time)
     message_count: int = 0
     user_messages: int = 0
@@ -128,6 +131,11 @@ class SessionMetrics:
     risk_events: list[dict] = field(default_factory=list)
     handoff_triggered: bool = False
     highest_risk: RiskLevel = RiskLevel.LOW
+
+
+# API configuration
+GUARDIAN_API_URL = os.environ.get("GUARDIAN_API_URL", "http://localhost:3000/api/guardian/events")
+GUARDIAN_API_KEY = os.environ.get("GUARDIAN_KEY", "")
 
 
 # =============================================================================
@@ -175,6 +183,23 @@ class VoxGuardian(BaseGuardian):
         """Check if Guardian has a valid license."""
         return self._license_valid
 
+    async def _post_event(self, event_type: str, data: dict) -> None:
+        """Post an event to the Guardian API for dashboard tracking."""
+        if not GUARDIAN_API_KEY:
+            return  # Skip if no API key configured
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(
+                    GUARDIAN_API_URL,
+                    json={"type": event_type, **data},
+                    headers={"Authorization": f"Bearer {GUARDIAN_API_KEY}"},
+                )
+                if response.status_code != 200:
+                    logger.warning(f"Guardian API returned {response.status_code}")
+        except Exception as e:
+            logger.debug(f"Failed to post Guardian event: {e}")
+
     async def on_room_join(self, room: Any) -> None:
         """
         Called when the agent joins a LiveKit room.
@@ -195,6 +220,13 @@ class VoxGuardian(BaseGuardian):
         room_name = getattr(room, "name", "unknown")
         logger.info(f"VoxGuardian monitoring started for room: {room_name}")
 
+        # Post session start event to API
+        await self._post_event("session_start", {
+            "sessionId": self._session.session_id,
+            "roomName": room_name,
+            "metadata": {"version": __version__},
+        })
+
         # Push initial status to room
         if self.config.alert_webhook:
             await self.push_alert(
@@ -205,13 +237,26 @@ class VoxGuardian(BaseGuardian):
 
     async def on_room_leave(self) -> None:
         """Called when the agent leaves a room."""
-        if self._session and self.config.alert_webhook:
+        if self._session:
             analytics = await self.get_session_analytics()
-            await self.push_alert(
-                "system",
-                "Guardian session ended",
-                analytics,
-            )
+
+            # Post session end event to API
+            sentiments = self._session.sentiment_scores
+            await self._post_event("session_end", {
+                "sessionId": self._session.session_id,
+                "avgSentiment": sum(sentiments) / len(sentiments) if sentiments else 0,
+                "minSentiment": min(sentiments) if sentiments else 0,
+                "messageCount": self._session.message_count,
+                "duration": analytics.get("duration_seconds", 0),
+                "analytics": analytics,
+            })
+
+            if self.config.alert_webhook:
+                await self.push_alert(
+                    "system",
+                    "Guardian session ended",
+                    analytics,
+                )
 
         self._active = False
         self._room = None
@@ -308,7 +353,7 @@ class VoxGuardian(BaseGuardian):
                 self._session.highest_risk = risk_level
 
             # Log and record risk events
-            if risk_level in [RiskLevel.HIGH, RiskLevel.CRITICAL]:
+            if risk_level in [RiskLevel.HIGH, RiskLevel.CRITICAL, RiskLevel.MEDIUM]:
                 event = {
                     "time": time.time(),
                     "text": text[:150] + ("..." if len(text) > 150 else ""),
@@ -319,14 +364,39 @@ class VoxGuardian(BaseGuardian):
                     "sentiment": sentiment,
                 }
                 self._session.risk_events.append(event)
-                logger.warning(
-                    f"🚨 RISK EVENT [{risk_level.value.upper()}]: "
-                    f"keywords={detected_keywords}, sentiment={sentiment:.2f}"
-                )
+
+                if risk_level in [RiskLevel.HIGH, RiskLevel.CRITICAL]:
+                    logger.warning(
+                        f"🚨 RISK EVENT [{risk_level.value.upper()}]: "
+                        f"keywords={detected_keywords}, sentiment={sentiment:.2f}"
+                    )
+
+                # Post risk event to API
+                await self._post_event("risk_detected", {
+                    "sessionId": self._session.session_id,
+                    "level": risk_level.value,
+                    "keywords": detected_keywords,
+                    "category": category,
+                    "text": text[:200],
+                    "sentiment": sentiment,
+                    "source": speaker,
+                })
 
                 # Push alert for high/critical events
-                if self.config.alert_webhook:
+                if self.config.alert_webhook and risk_level in [RiskLevel.HIGH, RiskLevel.CRITICAL]:
                     await self.push_alert("risk", f"Risk detected: {risk_level.value}", event)
+
+            # Post sentiment update periodically (every 5 messages)
+            if self._session.message_count % 5 == 0:
+                sentiments = self._session.sentiment_scores
+                await self._post_event("sentiment_update", {
+                    "sessionId": self._session.session_id,
+                    "sentiment": sentiment,
+                    "avgSentiment": sum(sentiments) / len(sentiments) if sentiments else 0,
+                    "minSentiment": min(sentiments) if sentiments else 0,
+                    "source": speaker,
+                    "text": text[:100] if sentiment < -0.5 else None,
+                })
 
         result = RiskScore(
             level=risk_level,
