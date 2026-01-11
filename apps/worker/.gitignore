@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+*.env
+
+# Logs
+*.log
+logs/
+
+# =============================================================================
+# Guardian Security Suite - Proprietary Code
+# =============================================================================
+# The Guardian module is proprietary and should NOT be committed to the
+# public repository. Only the mock template (_mock.py) is included for
+# reference.
+#
+# Real Guardian implementation should be installed via pip from the
+# private package repository:
+#   pip install voxnexus-guardian --index-url https://pypi.voxnexus.pro/simple/
+# =============================================================================
+
+# Exclude any real Guardian implementation files (except _mock.py)
+plugins/guardian/*.py
+!plugins/guardian/__init__.py
+!plugins/guardian/_mock.py
+
+# Exclude local Guardian development
+voxnexus_guardian/
+guardian_local/
+
+# Exclude license files
+*.license
+*.lic
+guardian.key

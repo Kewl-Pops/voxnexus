@@ -808,3 +808,240 @@ class PluginRegistry(Generic[T]):
     def list_providers(self) -> list[str]:
         """List all registered provider names."""
         return list(self._plugins.keys())
+
+
+# =============================================================================
+# Guardian Security Suite Interface (Open Core Plugin Protocol)
+# =============================================================================
+
+class RiskLevel(str, Enum):
+    """Risk level classification for conversation sentiment."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+@dataclass
+class RiskScore:
+    """
+    Risk assessment result from Guardian sentiment analysis.
+
+    Attributes:
+        level: Overall risk level classification
+        score: Numeric score (0.0 = safe, 1.0 = critical)
+        sentiment: Sentiment polarity (-1.0 negative to 1.0 positive)
+        keywords: Detected risk keywords/phrases
+        category: Risk category (e.g., 'frustration', 'threat', 'churn')
+        confidence: Confidence in the assessment (0.0 to 1.0)
+        metadata: Additional analysis metadata
+    """
+    level: RiskLevel
+    score: float
+    sentiment: float = 0.0
+    keywords: list[str] = field(default_factory=list)
+    category: Optional[str] = None
+    confidence: float = 1.0
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class GuardianConfig:
+    """
+    Configuration for the Guardian Security Suite.
+
+    Attributes:
+        api_key: License key for Guardian activation
+        auto_handoff_threshold: Risk score that triggers automatic handoff
+        alert_webhook: URL to POST alerts to
+        enable_sentiment: Enable real-time sentiment analysis
+        enable_risk_detection: Enable risk keyword detection
+        enable_takeover: Enable human takeover capability
+        custom_keywords: Additional risk keywords to detect
+    """
+    api_key: Optional[str] = None
+    auto_handoff_threshold: float = 0.8
+    alert_webhook: Optional[str] = None
+    enable_sentiment: bool = True
+    enable_risk_detection: bool = True
+    enable_takeover: bool = True
+    custom_keywords: list[str] = field(default_factory=list)
+
+
+class BaseGuardian(ABC):
+    """
+    Abstract base class for the Guardian Security Suite.
+
+    The Guardian plugin provides real-time sentiment analysis, risk detection,
+    and human takeover capabilities for voice conversations. This is a
+    proprietary module that upgrades VoxNexus with enterprise security features.
+
+    The open-source VoxNexus engine functions perfectly without Guardian,
+    but enables advanced monitoring when the proprietary module is installed.
+
+    Example:
+        ```python
+        # Guardian is auto-detected at startup
+        try:
+            from voxnexus_guardian import Guardian
+            guardian = Guardian(api_key=os.getenv("GUARDIAN_KEY"))
+            logger.info("Guardian Security Suite: ACTIVE")
+        except ImportError:
+            guardian = None
+            logger.info("Running in Open Source Mode")
+
+        # Hook into conversation pipeline
+        if guardian:
+            risk = await guardian.analyze_text(user_text)
+            if guardian.should_intervene(risk):
+                await guardian.trigger_handoff(room, reason="high_risk")
+        ```
+    """
+
+    def __init__(self, config: GuardianConfig):
+        """
+        Initialize Guardian with configuration.
+
+        Args:
+            config: Guardian configuration object
+        """
+        self.config = config
+        self._active = False
+        self._room = None
+
+    @property
+    @abstractmethod
+    def is_licensed(self) -> bool:
+        """Check if Guardian has a valid license."""
+        pass
+
+    @property
+    def is_active(self) -> bool:
+        """Check if Guardian is currently active in a session."""
+        return self._active
+
+    @abstractmethod
+    async def on_room_join(self, room: Any) -> None:
+        """
+        Called when the agent joins a LiveKit room.
+
+        Initialize session state, start monitoring, connect to alert systems.
+
+        Args:
+            room: The LiveKit room object
+        """
+        pass
+
+    @abstractmethod
+    async def on_room_leave(self) -> None:
+        """
+        Called when the agent leaves a room.
+
+        Clean up session state, send final analytics, close connections.
+        """
+        pass
+
+    @abstractmethod
+    async def analyze_text(self, text: str, speaker: str = "user") -> RiskScore:
+        """
+        Analyze text for sentiment and risk indicators.
+
+        This is called on every transcription from the user and every
+        response from the agent to maintain conversation context.
+
+        Args:
+            text: The text to analyze
+            speaker: Who said this ('user' or 'agent')
+
+        Returns:
+            RiskScore with sentiment and risk assessment
+        """
+        pass
+
+    @abstractmethod
+    def should_intervene(self, risk: RiskScore) -> bool:
+        """
+        Determine if human intervention is needed.
+
+        Args:
+            risk: The latest risk assessment
+
+        Returns:
+            True if automatic handoff should be triggered
+        """
+        pass
+
+    @abstractmethod
+    async def trigger_handoff(
+        self,
+        room: Any,
+        reason: str,
+        metadata: Optional[dict] = None,
+    ) -> bool:
+        """
+        Initiate handoff to human agent.
+
+        Args:
+            room: The LiveKit room
+            reason: Reason for handoff (e.g., 'high_risk', 'user_request')
+            metadata: Additional context for the human agent
+
+        Returns:
+            True if handoff was successful
+        """
+        pass
+
+    @abstractmethod
+    async def on_human_takeover(self, data: dict) -> None:
+        """
+        Handle incoming takeover command from human agent.
+
+        Called when a human clicks "Take Over" in the Guardian dashboard.
+        Should gracefully pause AI responses and hand control to human.
+
+        Args:
+            data: Takeover command data (agent_id, reason, human_name, etc.)
+        """
+        pass
+
+    @abstractmethod
+    async def on_human_release(self) -> None:
+        """
+        Handle release of control back to AI agent.
+
+        Called when human agent releases control back to the AI.
+        Should resume normal AI conversation flow.
+        """
+        pass
+
+    @abstractmethod
+    async def get_session_analytics(self) -> dict[str, Any]:
+        """
+        Get analytics for the current session.
+
+        Returns:
+            Dictionary with session metrics (avg sentiment, risk events, etc.)
+        """
+        pass
+
+    @abstractmethod
+    async def push_alert(
+        self,
+        alert_type: str,
+        message: str,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        """
+        Push an alert to the monitoring dashboard.
+
+        Args:
+            alert_type: Type of alert ('risk', 'sentiment', 'system')
+            message: Human-readable alert message
+            metadata: Additional alert data
+        """
+        pass
+
+    async def close(self) -> None:
+        """Clean up resources."""
+        self._active = False
+        self._room = None

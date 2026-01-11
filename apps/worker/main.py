@@ -38,14 +38,18 @@ from core.interfaces import (
     AgentConfig,
     AgentState,
     AudioFrame,
+    BaseGuardian,
     BaseLLM,
     BaseSTT,
     BaseTTS,
     BaseVoiceAgent,
+    GuardianConfig,
     LLMConfig,
     Message,
     MessageRole,
     PluginRegistry,
+    RiskLevel,
+    RiskScore,
     STTConfig,
     SynthesisResult,
     ToolCall,
@@ -64,6 +68,81 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("voxnexus.worker")
+
+
+# =============================================================================
+# Guardian Security Suite (Proprietary Plugin - Optional)
+# =============================================================================
+
+# Global Guardian instance - None if not installed/licensed
+_guardian_plugin: BaseGuardian | None = None
+
+
+def load_guardian_plugin() -> BaseGuardian | None:
+    """
+    Dynamically load the Guardian Security Suite if available.
+
+    The Guardian plugin is a proprietary module that provides:
+    - Real-time sentiment analysis (VADER + custom ML)
+    - Risk detection and keyword monitoring
+    - Human takeover capability
+    - Live monitoring dashboard
+
+    The open-source VoxNexus engine works perfectly without Guardian.
+    Guardian "upgrades" the system when the module is detected.
+
+    Returns:
+        Guardian instance if available and licensed, None otherwise
+    """
+    global _guardian_plugin
+
+    if _guardian_plugin is not None:
+        return _guardian_plugin
+
+    guardian_key = os.getenv("GUARDIAN_KEY")
+
+    try:
+        # Attempt to import the proprietary Guardian module
+        from voxnexus_guardian import Guardian
+
+        config = GuardianConfig(
+            api_key=guardian_key,
+            auto_handoff_threshold=float(os.getenv("GUARDIAN_HANDOFF_THRESHOLD", "0.8")),
+            alert_webhook=os.getenv("GUARDIAN_ALERT_WEBHOOK"),
+            enable_sentiment=os.getenv("GUARDIAN_ENABLE_SENTIMENT", "true").lower() == "true",
+            enable_risk_detection=os.getenv("GUARDIAN_ENABLE_RISK", "true").lower() == "true",
+            enable_takeover=os.getenv("GUARDIAN_ENABLE_TAKEOVER", "true").lower() == "true",
+        )
+
+        _guardian_plugin = Guardian(config)
+
+        if _guardian_plugin.is_licensed:
+            logger.info("=" * 60)
+            logger.info("🔐 GUARDIAN SECURITY SUITE: ACTIVE")
+            logger.info("   Real-time sentiment analysis: ENABLED")
+            logger.info("   Risk detection: ENABLED")
+            logger.info("   Human takeover: ENABLED")
+            logger.info("=" * 60)
+            return _guardian_plugin
+        else:
+            logger.warning("🔐 Guardian detected but license invalid")
+            _guardian_plugin = None
+            return None
+
+    except ImportError:
+        # Guardian module not installed - this is expected for open-source users
+        logger.info("🔓 Guardian Security Suite: NOT DETECTED")
+        logger.info("   Running in Open Source Mode")
+        logger.info("   Visit https://voxnexus.pro/guardian for enterprise features")
+        return None
+    except Exception as e:
+        logger.error(f"Guardian initialization failed: {e}")
+        return None
+
+
+def get_guardian() -> BaseGuardian | None:
+    """Get the current Guardian instance."""
+    return _guardian_plugin
 
 
 # =============================================================================
@@ -1461,7 +1540,10 @@ async def run_health_server(port: int = 8081):
     from aiohttp import web
 
     async def health_handler(request):
-        return web.json_response({
+        guardian = get_guardian()
+        guardian_active = guardian is not None and guardian.is_licensed
+
+        response = {
             "status": "healthy",
             "version": "0.1.0",
             "providers": {
@@ -1469,7 +1551,18 @@ async def run_health_server(port: int = 8081):
                 "stt": stt_registry.list_providers(),
                 "tts": tts_registry.list_providers(),
             },
-        })
+            "guardian_active": guardian_active,
+        }
+
+        if guardian_active and guardian:
+            response["guardian_features"] = {
+                "sentiment_analysis": guardian.config.enable_sentiment,
+                "risk_detection": guardian.config.enable_risk_detection,
+                "takeover": guardian.config.enable_takeover,
+            }
+            response["guardian_version"] = getattr(guardian, "__version__", "1.0.0")
+
+        return web.json_response(response)
 
     async def providers_handler(request):
         factory = AgentFactory()
@@ -1651,6 +1744,64 @@ async def agent_entrypoint(ctx: JobContext):
     # Store room reference for Visual Voice
     _current_room = ctx.room
 
+    # =========================================================================
+    # Guardian Security Suite Integration
+    # =========================================================================
+    guardian = get_guardian()
+    guardian_active = False
+    human_takeover_active = False
+
+    if guardian:
+        try:
+            await guardian.on_room_join(ctx.room)
+            guardian_active = True
+            logger.info(f"🔐 Guardian monitoring active for room: {ctx.room.name}")
+        except Exception as e:
+            logger.error(f"Guardian room join failed: {e}")
+            guardian = None
+
+    # Set up data channel handler for Guardian commands (takeover, etc.)
+    @ctx.room.on("data_received")
+    async def on_data_received(data: bytes, participant, topic: str | None):
+        nonlocal human_takeover_active
+
+        if topic != "guardian_command":
+            return
+
+        try:
+            import json
+            command = json.loads(data.decode("utf-8"))
+            cmd_type = command.get("type")
+
+            if cmd_type == "takeover" and guardian:
+                logger.info(f"🔐 Human takeover initiated by {command.get('agent_name', 'unknown')}")
+                human_takeover_active = True
+                await guardian.on_human_takeover(command)
+                # Notify the room that AI is paused
+                await ctx.room.local_participant.publish_data(
+                    json.dumps({
+                        "type": "guardian_status",
+                        "status": "human_active",
+                        "agent_name": command.get("agent_name"),
+                    }).encode("utf-8"),
+                    topic="guardian_status",
+                )
+
+            elif cmd_type == "release" and guardian:
+                logger.info("🔐 Human released control back to AI")
+                human_takeover_active = False
+                await guardian.on_human_release()
+                await ctx.room.local_participant.publish_data(
+                    json.dumps({
+                        "type": "guardian_status",
+                        "status": "ai_active",
+                    }).encode("utf-8"),
+                    topic="guardian_status",
+                )
+
+        except Exception as e:
+            logger.error(f"Guardian command handling failed: {e}")
+
     # Get agent config from room metadata
     agent_id = None
     system_prompt = DEFAULT_SYSTEM_PROMPT
@@ -1743,6 +1894,23 @@ async def agent_entrypoint(ctx: JobContext):
     session = AgentSession()
     await session.start(agent, room=ctx.room)
 
+    # Publish Guardian status to frontend
+    if guardian_active:
+        import json
+        await ctx.room.local_participant.publish_data(
+            json.dumps({
+                "type": "guardian_status",
+                "status": "active",
+                "guardian_active": True,
+                "features": {
+                    "sentiment_analysis": guardian.config.enable_sentiment if guardian else False,
+                    "risk_detection": guardian.config.enable_risk_detection if guardian else False,
+                    "takeover": guardian.config.enable_takeover if guardian else False,
+                },
+            }).encode("utf-8"),
+            topic="guardian_status",
+        )
+
     # Greet the user
     greeting = "Hello! I'm Nexus, your AI assistant."
     if has_knowledge_base:
@@ -1752,7 +1920,24 @@ async def agent_entrypoint(ctx: JobContext):
     greeting += " How can I help you today?"
     await session.say(greeting)
 
-    logger.info(f"Agent active in room: {ctx.room.name} (knowledge_base={has_knowledge_base}, webhooks={len(webhooks)}, visual_voice=True)")
+    logger.info(
+        f"Agent active in room: {ctx.room.name} "
+        f"(knowledge_base={has_knowledge_base}, webhooks={len(webhooks)}, "
+        f"visual_voice=True, guardian={guardian_active})"
+    )
+
+    # =========================================================================
+    # Guardian Cleanup on Room Leave
+    # =========================================================================
+    @ctx.room.on("disconnected")
+    async def on_disconnected():
+        if guardian:
+            try:
+                analytics = await guardian.get_session_analytics()
+                logger.info(f"🔐 Guardian session analytics: {analytics}")
+                await guardian.on_room_leave()
+            except Exception as e:
+                logger.error(f"Guardian cleanup failed: {e}")
 
 
 def run_livekit_worker():
@@ -1802,6 +1987,9 @@ def main():
     logger.info(f"Available LLM providers: {', '.join(providers['llm'])}")
     logger.info(f"Available STT providers: {', '.join(providers['stt'])}")
     logger.info(f"Available TTS providers: {', '.join(providers['tts'])}")
+
+    # Load Guardian Security Suite (proprietary plugin - optional)
+    load_guardian_plugin()
 
     # Check for required environment variables
     livekit_url = os.getenv("LIVEKIT_URL")
