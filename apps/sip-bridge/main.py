@@ -1056,7 +1056,8 @@ class SipBridgeManager:
         # Authentication
         cred = pj.AuthCredInfo()
         cred.scheme = "digest"
-        cred.realm = config.realm or config.server
+        # Use wildcard realm "*" to match any realm from server's 401 challenge
+        cred.realm = config.realm or "*"
         cred.username = config.username
         cred.dataType = 0  # Plain text password
         cred.data = config.password
