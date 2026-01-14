@@ -18,6 +18,7 @@ export const TTS_PROVIDERS = [
   { id: "elevenlabs", name: "ElevenLabs", models: ["eleven_turbo_v2_5", "eleven_multilingual_v2"] },
   { id: "openai", name: "OpenAI TTS", models: ["tts-1", "tts-1-hd"] },
   { id: "kokoro", name: "Kokoro (Local)", models: ["kokoro-82m"] },
+  { id: "voxclone", name: "VoxClone (Custom Voice)", models: ["openvoice-v2"] },
 ] as const;
 
 // Kokoro voice options for local TTS
@@ -37,6 +38,7 @@ export const KOKORO_VOICES = [
 export const NAV_ITEMS = [
   { name: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
   { name: "Agents", href: "/agents", icon: "Bot" },
+  { name: "Voice Lab", href: "/voice-lab", icon: "Mic" },
   { name: "Conversations", href: "/conversations", icon: "MessageSquare" },
   { name: "API Keys", href: "/api-keys", icon: "Key" },
   { name: "Settings", href: "/settings", icon: "Settings" },
@@ -53,7 +55,13 @@ export const BILLING_NAV_ITEMS = [
   { name: "Billing", href: "/billing", icon: "CreditCard" },
 ] as const;
 
+// Guardian nav items (shown for ADMIN and AGENT roles)
+export const GUARDIAN_NAV_ITEMS = [
+  { name: "Guardian Console", href: "/agent", icon: "Shield" },
+] as const;
+
 // Admin nav items (only shown for ADMIN role)
 export const ADMIN_NAV_ITEMS = [
-  { name: "Admin Dashboard", href: "/admin", icon: "Shield" },
+  { name: "Admin Dashboard", href: "/admin", icon: "Settings" },
+  { name: "Reports", href: "/reports", icon: "BarChart" },
 ] as const;

@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@voxnexus/db";
+import { auth } from "@/auth";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -92,7 +93,35 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
     const { id: agentId } = await params;
+
+    // Verify agent belongs to user's organization
+    const agent = await prisma.agentConfig.findFirst({
+      where: {
+        id: agentId,
+        organizationId: orgUser.organizationId,
+      },
+    });
+
+    if (!agent) {
+      return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+    }
 
     // Get unique documents (grouped by filename)
     const documents = await prisma.$queryRaw<Array<{
@@ -138,11 +167,35 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization and role
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true, role: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
+    // Only ADMIN users can upload knowledge documents
+    if (orgUser.role !== "ADMIN") {
+      return NextResponse.json({ error: "Only admins can upload knowledge documents" }, { status: 403 });
+    }
+
     const { id: agentId } = await params;
 
-    // Verify agent exists
-    const agent = await prisma.agentConfig.findUnique({
-      where: { id: agentId },
+    // Verify agent exists and belongs to user's organization
+    const agent = await prisma.agentConfig.findFirst({
+      where: {
+        id: agentId,
+        organizationId: orgUser.organizationId,
+      },
     });
 
     if (!agent) {
@@ -266,7 +319,41 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization and role
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true, role: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
+    // Only ADMIN users can delete knowledge documents
+    if (orgUser.role !== "ADMIN") {
+      return NextResponse.json({ error: "Only admins can delete knowledge documents" }, { status: 403 });
+    }
+
     const { id: agentId } = await params;
+
+    // Verify agent exists and belongs to user's organization
+    const agent = await prisma.agentConfig.findFirst({
+      where: {
+        id: agentId,
+        organizationId: orgUser.organizationId,
+      },
+    });
+
+    if (!agent) {
+      return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+    }
+
     const { searchParams } = new URL(request.url);
     const filename = searchParams.get("filename");
 

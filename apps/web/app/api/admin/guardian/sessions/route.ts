@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
       select: { role: true },
     });
 
-    if (currentUser?.role !== "ADMIN") {
+    if (currentUser?.role !== "ADMIN" && currentUser?.role !== "AGENT") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -32,6 +32,20 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get("status"); // active, completed, takeover
     const limit = parseInt(searchParams.get("limit") || "50", 10);
     const offset = parseInt(searchParams.get("offset") || "0", 10);
+
+    // Auto-cleanup: Mark sessions as completed if they've been active for > 30 minutes
+    // This handles cases where disconnect handlers didn't fire
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    await prisma.guardianSession.updateMany({
+      where: {
+        status: "active",
+        startedAt: { lt: thirtyMinutesAgo },
+      },
+      data: {
+        status: "completed",
+        endedAt: new Date(),
+      },
+    });
 
     // Build where clause
     const where: Record<string, unknown> = {};

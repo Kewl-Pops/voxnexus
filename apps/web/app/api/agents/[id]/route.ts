@@ -2,16 +2,37 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@voxnexus/db";
+import { auth } from "@/auth";
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
     const { id } = await params;
 
-    const agent = await prisma.agentConfig.findUnique({
-      where: { id },
+    // Only fetch agent if it belongs to user's organization
+    const agent = await prisma.agentConfig.findFirst({
+      where: {
+        id,
+        organizationId: orgUser.organizationId,
+      },
       include: {
         _count: {
           select: { conversations: true },
@@ -81,9 +102,37 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization and role
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true, role: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
+    // Only admin/owner users can update agents
+    if (orgUser.role !== "admin" && orgUser.role !== "owner") {
+      return NextResponse.json({ error: "Only admins can update agents" }, { status: 403 });
+    }
+
     const { id } = await params;
 
-    const existing = await prisma.agentConfig.findUnique({ where: { id } });
+    // Verify agent belongs to user's organization
+    const existing = await prisma.agentConfig.findFirst({
+      where: {
+        id,
+        organizationId: orgUser.organizationId,
+      },
+    });
+
     if (!existing) {
       return NextResponse.json(
         { error: "Agent not found" },
@@ -136,9 +185,37 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization and role
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true, role: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
+    // Only admin/owner users can delete agents
+    if (orgUser.role !== "admin" && orgUser.role !== "owner") {
+      return NextResponse.json({ error: "Only admins can delete agents" }, { status: 403 });
+    }
+
     const { id } = await params;
 
-    const existing = await prisma.agentConfig.findUnique({ where: { id } });
+    // Verify agent belongs to user's organization
+    const existing = await prisma.agentConfig.findFirst({
+      where: {
+        id,
+        organizationId: orgUser.organizationId,
+      },
+    });
+
     if (!existing) {
       return NextResponse.json(
         { error: "Agent not found" },

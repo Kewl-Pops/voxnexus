@@ -79,18 +79,12 @@ export default async function AdminUsersPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              New This Week
+              Agents
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {
-                users.filter((u) => {
-                  const weekAgo = new Date();
-                  weekAgo.setDate(weekAgo.getDate() - 7);
-                  return u.createdAt > weekAgo;
-                }).length
-              }
+              {users.filter((u) => u.role === "AGENT").length}
             </div>
           </CardContent>
         </Card>

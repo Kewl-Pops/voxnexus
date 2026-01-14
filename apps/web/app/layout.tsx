@@ -1,11 +1,13 @@
 // Copyright 2026 Cothink LLC. Licensed under Apache-2.0.
 
+import React from "react";
+import Script from "next/script";
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { SessionProvider } from "@/components/providers/session-provider";
 import { AnalyticsTracker } from "@/components/analytics-tracker";
-import { JsonLd } from "@/components/seo/json-ld";
+import { Toaster } from "@/components/ui/toaster";
 import { siteConfig } from "@/config/site";
 
 const inter = Inter({
@@ -149,15 +151,171 @@ export default function RootLayout({
 
         {/* RSS Feed */}
         <link rel="alternate" type="application/rss+xml" title="VoxNexus Updates" href="/feed.xml" />
-
-        {/* JSON-LD Structured Data */}
-        <JsonLd type="all" />
       </head>
       <body className={inter.className}>
         <SessionProvider>
           <AnalyticsTracker />
           {children}
+          <Toaster />
         </SessionProvider>
+        
+        {/* JSON-LD Structured Data - using next/Script for proper loading */}
+        <Script
+          id="jsonld-website"
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "WebSite",
+              name: siteConfig.name,
+              description: siteConfig.description,
+              url: siteConfig.url,
+              potentialAction: {
+                "@type": "SearchAction",
+                target: {
+                  "@type": "EntryPoint",
+                  urlTemplate: `${siteConfig.url}/search?q={search_term_string}`,
+                },
+                "query-input": "required name=search_term_string",
+              },
+            })
+          }}
+        />
+        
+        <Script
+          id="jsonld-software"
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "SoftwareApplication",
+              name: siteConfig.name,
+              description: siteConfig.description,
+              url: siteConfig.url,
+              applicationCategory: "BusinessApplication",
+              operatingSystem: "Linux, Docker, Windows, macOS",
+              offers: [
+                {
+                  "@type": "Offer",
+                  name: siteConfig.pricing.free.name,
+                  price: siteConfig.pricing.free.price,
+                  priceCurrency: siteConfig.pricing.free.currency,
+                  description: siteConfig.pricing.free.description,
+                },
+                {
+                  "@type": "Offer",
+                  name: siteConfig.pricing.pro.name,
+                  price: siteConfig.pricing.pro.price,
+                  priceCurrency: siteConfig.pricing.pro.currency,
+                  priceSpecification: {
+                    "@type": "UnitPriceSpecification",
+                    price: siteConfig.pricing.pro.price,
+                    priceCurrency: siteConfig.pricing.pro.currency,
+                    unitText: "MONTH",
+                  },
+                  description: siteConfig.pricing.pro.description,
+                },
+                {
+                  "@type": "Offer",
+                  name: siteConfig.pricing.agency.name,
+                  price: siteConfig.pricing.agency.price,
+                  priceCurrency: siteConfig.pricing.agency.currency,
+                  priceSpecification: {
+                    "@type": "UnitPriceSpecification",
+                    price: siteConfig.pricing.agency.price,
+                    priceCurrency: siteConfig.pricing.agency.currency,
+                    unitText: "MONTH",
+                  },
+                  description: siteConfig.pricing.agency.description,
+                },
+              ],
+              softwareVersion: "1.0.0",
+              datePublished: "2026-01-01",
+              author: {
+                "@type": "Organization",
+                name: "Cothink LLC",
+                url: "https://cothink.io",
+              },
+              publisher: {
+                "@type": "Organization",
+                name: "Cothink LLC",
+                url: "https://cothink.io",
+              },
+              license: "https://www.apache.org/licenses/LICENSE-2.0",
+              isAccessibleForFree: true,
+              featureList: [
+                "AI Voice Agents",
+                "Local TTS with Kokoro",
+                "SIP Telephony Integration",
+                "OpenAI and Anthropic LLM Support",
+                "Local LLM via Ollama",
+                "Knowledge Base RAG",
+                "Webhook Integrations",
+                "Real-time Voice Processing",
+                "Multi-tenant Architecture",
+                "White-label Support",
+              ],
+              screenshot: `${siteConfig.url}/screenshots/dashboard.png`,
+              softwareRequirements: "Docker, PostgreSQL, Redis",
+              storageRequirements: "4GB RAM minimum",
+              memoryRequirements: "4GB RAM minimum",
+              processorRequirements: "2 CPU cores minimum",
+            })
+          }}
+        />
+        
+        <Script
+          id="jsonld-organization"
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "Organization",
+              name: "Cothink LLC",
+              url: "https://cothink.io",
+              logo: `${siteConfig.url}/logo.png`,
+              description:
+                "Building open source AI infrastructure for voice and conversational applications.",
+              foundingDate: "2024",
+              founders: [
+                {
+                  "@type": "Person",
+                  name: "Alberto Fernandez",
+                  url: "https://linkedin.com/in/afernandez1983",
+                },
+              ],
+              sameAs: [
+                siteConfig.links.github,
+                siteConfig.links.twitter,
+                siteConfig.links.linkedin,
+              ],
+              contactPoint: {
+                "@type": "ContactPoint",
+                contactType: "customer support",
+                email: "support@voxnexus.pro",
+              },
+            })
+          }}
+        />
+        
+        <Script
+          id="jsonld-faq"
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "FAQPage",
+              mainEntity: siteConfig.faq.map((item) => ({
+                "@type": "Question",
+                name: item.question,
+                acceptedAnswer: {
+                  "@type": "Answer",
+                  text: item.answer,
+                },
+              })),
+            })
+          }}
+        />
       </body>
     </html>
   );

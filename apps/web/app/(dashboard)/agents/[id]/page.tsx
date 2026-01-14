@@ -56,6 +56,12 @@ interface Webhook {
   createdAt: string;
 }
 
+interface VoiceProfile {
+  id: string;
+  name: string;
+  provider: string;
+}
+
 export default function AgentDetailPage() {
   const router = useRouter();
   const params = useParams();
@@ -94,6 +100,9 @@ export default function AgentDetailPage() {
     secret: "",
   });
 
+  // Voice profile state
+  const [voiceProfiles, setVoiceProfiles] = useState<VoiceProfile[]>([]);
+
   useEffect(() => {
     async function fetchAgent() {
       try {
@@ -115,6 +124,22 @@ export default function AgentDetailPage() {
       fetchAgent();
     }
   }, [params.id, router]);
+
+  // Fetch voice profiles
+  useEffect(() => {
+    async function fetchVoiceProfiles() {
+      try {
+        const response = await fetch("/api/voices");
+        if (response.ok) {
+          const data = await response.json();
+          setVoiceProfiles(data.voices || []);
+        }
+      } catch (error) {
+        console.error("Failed to fetch voice profiles:", error);
+      }
+    }
+    fetchVoiceProfiles();
+  }, []);
 
   const tabs = [
     { id: "overview" as Tab, label: "Overview", icon: Icons.LayoutDashboard },
@@ -631,7 +656,7 @@ export default function AgentDetailPage() {
                     <Label>TTS Provider</Label>
                     <Select
                       value={agent.ttsConfig?.provider || "openai"}
-                      onChange={(e) => setAgent({ ...agent, ttsConfig: { ...agent.ttsConfig, provider: e.target.value } })}
+                      onChange={(e) => setAgent({ ...agent, ttsConfig: { ...agent.ttsConfig, provider: e.target.value, voice_id: undefined } })}
                     >
                       {TTS_PROVIDERS.map((p) => (
                         <option key={p.id} value={p.id}>{p.name}</option>
@@ -650,6 +675,34 @@ export default function AgentDetailPage() {
                     </Select>
                   </div>
                 </div>
+
+                {/* Voice Profile Selection for VoxClone */}
+                {agent.ttsConfig?.provider === "voxclone" && (
+                  <div className="space-y-2 pt-4 border-t">
+                    <Label>Custom Voice Profile</Label>
+                    {voiceProfiles.length === 0 ? (
+                      <div className="text-sm text-muted-foreground bg-muted/50 p-3 rounded-md">
+                        No custom voices found.{" "}
+                        <Link href="/voice-lab" className="text-primary hover:underline">
+                          Create one in Voice Lab
+                        </Link>
+                      </div>
+                    ) : (
+                      <Select
+                        value={agent.ttsConfig?.voice_id || ""}
+                        onChange={(e) => setAgent({ ...agent, ttsConfig: { ...agent.ttsConfig, voice_id: e.target.value } })}
+                      >
+                        <option value="">Select a voice profile...</option>
+                        {voiceProfiles.map((voice) => (
+                          <option key={voice.id} value={voice.id}>{voice.name}</option>
+                        ))}
+                      </Select>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      Select a custom voice created in the Voice Lab
+                    </p>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

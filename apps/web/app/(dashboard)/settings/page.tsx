@@ -7,13 +7,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Select } from "@/components/ui/select";
 import * as Icons from "@/components/icons";
+
+export const dynamic = "force-dynamic";
 
 type Tab = "general" | "providers" | "billing" | "team";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("general");
   const [saving, setSaving] = useState(false);
+
+  // Invite modal state
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("member");
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState("");
+  const [inviteSuccess, setInviteSuccess] = useState("");
 
   const [profile, setProfile] = useState({
     organizationName: "My Organization",
@@ -42,6 +53,47 @@ export default function SettingsPage() {
     setSaving(true);
     await new Promise((resolve) => setTimeout(resolve, 1000));
     setSaving(false);
+  };
+
+  const handleInvite = async () => {
+    if (!inviteEmail) {
+      setInviteError("Email is required");
+      return;
+    }
+
+    setInviting(true);
+    setInviteError("");
+    setInviteSuccess("");
+
+    try {
+      const response = await fetch("/api/organizations/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: inviteEmail,
+          role: inviteRole,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setInviteError(data.error || "Failed to invite user");
+      } else {
+        setInviteSuccess(data.message);
+        setInviteEmail("");
+        setInviteRole("member");
+        // Close modal after 2 seconds
+        setTimeout(() => {
+          setShowInviteModal(false);
+          setInviteSuccess("");
+        }, 2000);
+      }
+    } catch (error) {
+      setInviteError("Failed to invite user. Please try again.");
+    } finally {
+      setInviting(false);
+    }
   };
 
   return (
@@ -334,7 +386,7 @@ export default function SettingsPage() {
                     Manage who has access to your organization
                   </CardDescription>
                 </div>
-                <Button>
+                <Button onClick={() => setShowInviteModal(true)}>
                   <Icons.Plus size={16} className="mr-2" />
                   Invite Member
                 </Button>
@@ -378,6 +430,108 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
+
+      {/* Invite Member Modal */}
+      {showInviteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => {
+              setShowInviteModal(false);
+              setInviteError("");
+              setInviteSuccess("");
+            }}
+          />
+
+          {/* Modal */}
+          <div className="relative bg-background rounded-lg shadow-lg w-full max-w-md mx-4 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Invite Team Member</h2>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  setShowInviteModal(false);
+                  setInviteError("");
+                  setInviteSuccess("");
+                }}
+              >
+                <Icons.X size={18} />
+              </Button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Email Address</Label>
+                <Input
+                  type="email"
+                  placeholder="colleague@company.com"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  disabled={inviting}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Role</Label>
+                <Select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value)}
+                  disabled={inviting}
+                >
+                  <option value="member">Member - Dashboard access</option>
+                  <option value="agent">Agent - Guardian console access</option>
+                  <option value="admin">Admin - Full access</option>
+                </Select>
+              </div>
+
+              {inviteError && (
+                <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 p-3 rounded-md">
+                  <Icons.AlertCircle size={16} />
+                  {inviteError}
+                </div>
+              )}
+
+              {inviteSuccess && (
+                <div className="flex items-center gap-2 text-sm text-emerald-500 bg-emerald-500/10 p-3 rounded-md">
+                  <Icons.Check size={16} />
+                  {inviteSuccess}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    setShowInviteModal(false);
+                    setInviteError("");
+                    setInviteSuccess("");
+                  }}
+                  disabled={inviting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleInvite}
+                  disabled={inviting || !inviteEmail}
+                >
+                  {inviting ? (
+                    <>
+                      <Icons.Loader size={16} className="mr-2 animate-spin" />
+                      Inviting...
+                    </>
+                  ) : (
+                    "Send Invite"
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

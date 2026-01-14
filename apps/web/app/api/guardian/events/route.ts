@@ -3,6 +3,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@voxnexus/db";
 
+const DEBUG = process.env.LOG_LEVEL === "debug";
+
+function log(message: string, data?: unknown) {
+  if (DEBUG) {
+    console.log(`[Guardian API] ${message}`, data ? JSON.stringify(data) : "");
+  }
+}
+
 /**
  * POST /api/guardian/events
  *
@@ -15,15 +23,33 @@ export async function POST(request: NextRequest) {
     const authHeader = request.headers.get("authorization");
     const expectedKey = process.env.GUARDIAN_API_KEY || process.env.GUARDIAN_KEY;
 
+    log("Received event request", { hasAuth: !!authHeader, hasKey: !!expectedKey });
+
     if (!expectedKey || authHeader !== `Bearer ${expectedKey}`) {
+      log("Auth failed", { authHeader, expectedKey: expectedKey?.slice(0, 10) + "..." });
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await request.json();
     const { type, sessionId, roomName, agentConfigId, ...eventData } = body;
 
+    log(`Processing event: ${type}`, { sessionId, roomName, agentConfigId, eventData });
+
     switch (type) {
       case "session_start": {
+        // Check if an active session already exists for this room (prevent duplicates)
+        const existingSession = await prisma.guardianSession.findFirst({
+          where: {
+            roomName: roomName,
+            status: "active",
+          },
+        });
+
+        if (existingSession) {
+          // Return existing session instead of creating duplicate
+          return NextResponse.json({ success: true, sessionId: existingSession.id, existing: true });
+        }
+
         // Create a new Guardian session
         const session = await prisma.guardianSession.create({
           data: {
@@ -50,9 +76,27 @@ export async function POST(request: NextRequest) {
       }
 
       case "session_end": {
-        // Update session as completed
-        const session = await prisma.guardianSession.update({
+        // Try to find session by ID first, fallback to roomName
+        let session = await prisma.guardianSession.findUnique({
           where: { id: sessionId },
+        });
+
+        if (!session && roomName) {
+          // Fallback: find by roomName if ID doesn't match
+          session = await prisma.guardianSession.findFirst({
+            where: { roomName: roomName, status: "active" },
+          });
+          log("session_end fallback lookup by roomName", { roomName, found: !!session });
+        }
+
+        if (!session) {
+          log("session_end: session not found", { sessionId, roomName });
+          return NextResponse.json({ success: true, warning: "Session not found" });
+        }
+
+        // Update session as completed
+        session = await prisma.guardianSession.update({
+          where: { id: session.id },
           data: {
             status: "completed",
             endedAt: new Date(),

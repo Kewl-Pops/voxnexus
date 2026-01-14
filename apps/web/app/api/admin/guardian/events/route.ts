@@ -17,19 +17,50 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check if current user is admin
-    const currentUser = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (currentUser?.role !== "ADMIN") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    // Parse query params
+    // Parse query params first
     const searchParams = request.nextUrl.searchParams;
     const sessionId = searchParams.get("sessionId");
+
+    // For session-specific queries, check if user owns the session or is admin
+    if (sessionId) {
+      // Check if user is assigned to the agent for this session
+      const userAssignment = await prisma.agentAssignment.findFirst({
+        where: {
+          userId: session.user.id,
+          agentConfig: {
+            organization: {
+              users: {
+                some: {
+                  userId: session.user.id,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // If not assigned and not admin, deny access
+      if (!userAssignment) {
+        const currentUser = await prisma.user.findUnique({
+          where: { id: session.user.id },
+          select: { role: true },
+        });
+
+        if (currentUser?.role !== "ADMIN") {
+          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+      }
+    } else {
+      // For non-session queries, require admin
+      const currentUser = await prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: { role: true },
+      });
+
+      if (currentUser?.role !== "ADMIN") {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
     const eventType = searchParams.get("eventType");
     const riskLevel = searchParams.get("riskLevel");
     const hours = parseInt(searchParams.get("hours") || "24", 10);

@@ -102,3 +102,29 @@ temp/
 playwright-report/
 playwright/.cache/
 test-results/
+
+# =============================================================================
+# Proprietary Enterprise Modules (Licensed separately)
+# =============================================================================
+# These modules are NOT part of the open-source release.
+# They are maintained in a separate private repository.
+apps/cloning-node/
+apps/worker/plugins/guardian/
+apps/worker/data/
+
+# User uploads (not for version control)
+apps/web/public/uploads/
+
+# Development/Debug files (not for production)
+*.bak
+*.pid
+debug-*.html
+*-inspector.html
+check-*.sh
+verify-*.sh
+context-*.md
+kimi-*.md
+GUARDIAN-FIX-SUMMARY.md
+VOICE-CLONING-IMPLEMENTATION.md
+apps/web/test-*
+scripts/debug-*

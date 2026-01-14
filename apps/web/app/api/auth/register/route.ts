@@ -38,52 +38,58 @@ export async function POST(request: NextRequest) {
     // Hash password
     const passwordHash = await hash(password, 12);
 
-    // Create user
-    const user = await prisma.user.create({
-      data: {
-        email,
-        name: name || email.split("@")[0],
-        passwordHash,
-        emailVerified: true,
-      },
-    });
-
-    // Create default organization with FREE subscription
+    // CRITICAL: Use transaction to ensure user and org are created atomically
+    // If org creation fails, user creation is rolled back to prevent orphaned users
     const now = new Date();
     const periodEnd = new Date(now);
     periodEnd.setMonth(periodEnd.getMonth() + 1);
 
-    const org = await prisma.organization.create({
-      data: {
-        name: `${name || email.split("@")[0]}'s Organization`,
-        slug: `org-${user.id.slice(0, 8)}`,
-        users: {
-          create: {
-            userId: user.id,
-            role: "owner",
+    const result = await prisma.$transaction(async (tx) => {
+      // Create user
+      const user = await tx.user.create({
+        data: {
+          email,
+          name: name || email.split("@")[0],
+          passwordHash,
+          emailVerified: true,
+        },
+      });
+
+      // Create default organization with FREE subscription
+      const org = await tx.organization.create({
+        data: {
+          name: `${name || email.split("@")[0]}'s Organization`,
+          slug: `org-${user.id.slice(0, 8)}`,
+          users: {
+            create: {
+              userId: user.id,
+              role: "owner",
+            },
+          },
+          subscription: {
+            create: {
+              plan: "FREE",
+              status: "ACTIVE",
+              agentLimit: -1, // Unlimited for self-hosted
+              minuteLimit: -1,
+              sipDeviceLimit: -1,
+              subAccountLimit: 0,
+              currentPeriodStart: now,
+              currentPeriodEnd: periodEnd,
+            },
           },
         },
-        subscription: {
-          create: {
-            plan: "FREE",
-            status: "ACTIVE",
-            agentLimit: -1, // Unlimited for self-hosted
-            minuteLimit: -1,
-            sipDeviceLimit: -1,
-            subAccountLimit: 0,
-            currentPeriodStart: now,
-            currentPeriodEnd: periodEnd,
-          },
-        },
-      },
+      });
+
+      return { user, org };
     });
 
     return NextResponse.json({
       success: true,
       user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
+        id: result.user.id,
+        email: result.user.email,
+        name: result.user.name,
       },
     }, { status: 201 });
   } catch (error) {

@@ -7,7 +7,11 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Select } from "@/components/ui/select";
 import * as Icons from "@/components/icons";
+
+const ROLES = ["USER", "AGENT", "ADMIN"] as const;
+type Role = typeof ROLES[number];
 
 interface User {
   id: string;
@@ -37,19 +41,13 @@ export function UsersTable({ users }: UsersTableProps) {
       user.organizationName.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleToggleRole = async (userId: string, currentRole: string) => {
-    if (!confirm(`Are you sure you want to ${currentRole === "ADMIN" ? "demote" : "promote"} this user?`)) {
-      return;
-    }
-
+  const handleChangeRole = async (userId: string, newRole: Role) => {
     setLoading(userId);
     try {
       const response = await fetch(`/api/admin/users/${userId}/role`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          role: currentRole === "ADMIN" ? "USER" : "ADMIN",
-        }),
+        body: JSON.stringify({ role: newRole }),
       });
 
       if (response.ok) {
@@ -63,6 +61,17 @@ export function UsersTable({ users }: UsersTableProps) {
       alert("Failed to update role");
     } finally {
       setLoading(null);
+    }
+  };
+
+  const getRoleBadgeVariant = (role: string) => {
+    switch (role) {
+      case "ADMIN":
+        return "destructive";
+      case "AGENT":
+        return "default";
+      default:
+        return "outline";
     }
   };
 
@@ -192,11 +201,24 @@ export function UsersTable({ users }: UsersTableProps) {
                   </td>
                   <td className="px-4 py-3 text-sm">{user.agentCount}</td>
                   <td className="px-4 py-3">
-                    <Badge
-                      variant={user.role === "ADMIN" ? "destructive" : "outline"}
+                    <Select
+                      value={user.role}
+                      onChange={(e) => handleChangeRole(user.id, e.target.value as Role)}
+                      disabled={loading === user.id}
+                      className={`w-24 h-8 text-xs font-medium ${
+                        user.role === "ADMIN"
+                          ? "border-red-500/50 text-red-500"
+                          : user.role === "AGENT"
+                          ? "border-blue-500/50 text-blue-500"
+                          : "border-zinc-500/50"
+                      }`}
                     >
-                      {user.role}
-                    </Badge>
+                      {ROLES.map((role) => (
+                        <option key={role} value={role}>
+                          {role}
+                        </option>
+                      ))}
+                    </Select>
                   </td>
                   <td className="px-4 py-3 text-sm text-muted-foreground">
                     {formatDate(user.createdAt)}
@@ -211,23 +233,6 @@ export function UsersTable({ users }: UsersTableProps) {
                         title="Impersonate user"
                       >
                         <Icons.Eye size={16} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleToggleRole(user.id, user.role)}
-                        disabled={loading === user.id}
-                        title={
-                          user.role === "ADMIN"
-                            ? "Demote to User"
-                            : "Promote to Admin"
-                        }
-                      >
-                        {user.role === "ADMIN" ? (
-                          <Icons.UserMinus size={16} />
-                        ) : (
-                          <Icons.UserPlus size={16} />
-                        )}
                       </Button>
                     </div>
                   </td>

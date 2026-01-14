@@ -41,6 +41,7 @@ enum SubscriptionStatus {
 
 enum UserRole {
   USER
+  AGENT
   ADMIN
 }
 
@@ -76,6 +77,7 @@ model Organization {
   whiteLabelConfig   WhiteLabelConfig?
   customDomain       CustomDomain?
   providerCredentials ProviderCredential[]
+  voiceProfiles      VoiceProfile[]
 
   @@index([parentId])
   @@map("organizations")
@@ -212,8 +214,24 @@ model User {
   organizations       OrganizationUser[]
   sessions            Session[]
   passwordResetTokens PasswordResetToken[]
+  assignedAgents      AgentAssignment[]
 
   @@map("users")
+}
+
+// Maps human agents (AGENT role users) to AI agents they can monitor
+model AgentAssignment {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  agentConfigId String   @map("agent_config_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agentConfig AgentConfig @relation(fields: [agentConfigId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, agentConfigId])
+  @@map("agent_assignments")
 }
 
 model OrganizationUser {
@@ -298,6 +316,8 @@ model AgentConfig {
   usageLogs          UsageLog[]
   knowledgeDocuments KnowledgeDocument[]
   sipDevices         SipDevice[]
+  guardianConfig     GuardianConfig?
+  assignedUsers      AgentAssignment[]
 
   @@index([organizationId])
   @@index([isActive])
@@ -596,6 +616,7 @@ enum GuardianEventType {
   RISK_DETECTED
   SENTIMENT_ALERT
   HUMAN_TAKEOVER
+  HUMAN_RELEASE
   KEYWORD_MATCH
 }
 
@@ -619,6 +640,9 @@ model GuardianSession {
   humanActive   Boolean             @default(false) @map("human_active")
   takeoverAt    DateTime?           @map("takeover_at")
   takeoverBy    String?             @map("takeover_by")
+
+  // Agent claim - prevents duplicate agents
+  activeAgentId String?             @unique @map("active_agent_id")
 
   metadata      Json                @default("{}")
 
@@ -663,6 +687,57 @@ model GuardianEvent {
   @@index([riskLevel])
   @@index([createdAt])
   @@map("guardian_events")
+}
+
+model GuardianConfig {
+  id                   String   @id @default(uuid())
+  agentConfigId        String   @unique @map("agent_config_id")
+
+  // Risk keyword lists (matched against conversation text)
+  criticalKeywords     String[] @default([]) @map("critical_keywords")
+  highRiskKeywords     String[] @default([]) @map("high_risk_keywords")
+  mediumRiskKeywords   String[] @default([]) @map("medium_risk_keywords")
+  positiveKeywords     String[] @default([]) @map("positive_keywords")
+
+  // Auto-handoff threshold: triggers human takeover when sentiment drops below this
+  // Value from -1.0 (very negative) to 0 (neutral), default -0.8
+  autoHandoffThreshold Float    @default(-0.8) @map("auto_handoff_threshold")
+
+  // Positive alert threshold: triggers opportunity alert when sentiment rises above this
+  // Value from 0 (neutral) to 1.0 (very positive), default 0.7
+  positiveAlertThreshold Float  @default(0.7) @map("positive_alert_threshold")
+
+  // Enable/disable Guardian for this agent
+  enabled              Boolean  @default(true)
+
+  metadata             Json     @default("{}")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  agent AgentConfig @relation(fields: [agentConfigId], references: [id], onDelete: Cascade)
+
+  @@index([agentConfigId])
+  @@map("guardian_configs")
+}
+
+// =============================================================================
+// Voice Cloning Profiles
+// =============================================================================
+
+model VoiceProfile {
+  id                String   @id @default(cuid())
+  organizationId    String   @map("organization_id")
+  name              String
+  referenceAudioUrl String   @map("reference_audio_url")
+  provider          String   @default("voxclone")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("voice_profiles")
 }
 
 // =============================================================================

@@ -173,3 +173,110 @@ export async function sendPasswordResetEmail(
   const template = getPasswordResetTemplate(resetUrl, userName);
   return sendEmail(to, template);
 }
+
+function getInviteTemplate(
+  organizationName: string,
+  inviterName: string,
+  role: string,
+  setupToken: string
+): EmailTemplate {
+  const setupUrl = `${APP_URL}/setup-account?token=${setupToken}`;
+  const roleDisplay = role === "agent" ? "Agent" : role === "admin" ? "Admin" : "Member";
+  return {
+    subject: `You've been invited to join ${organizationName} on VoxNexus`,
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; background-color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+  <table role="presentation" style="width: 100%; border-collapse: collapse;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" style="width: 100%; max-width: 480px; border-collapse: collapse;">
+          <!-- Logo -->
+          <tr>
+            <td align="center" style="padding-bottom: 32px;">
+              <span style="font-size: 28px; font-weight: bold; color: #ffffff;">
+                Vox<span style="color: #10b981;">Nexus</span>
+              </span>
+            </td>
+          </tr>
+
+          <!-- Card -->
+          <tr>
+            <td style="background-color: #1e293b; border-radius: 16px; padding: 40px;">
+              <h1 style="margin: 0 0 16px 0; font-size: 24px; font-weight: 600; color: #ffffff; text-align: center;">
+                You're Invited!
+              </h1>
+
+              <p style="margin: 0 0 24px 0; font-size: 16px; line-height: 24px; color: #94a3b8; text-align: center;">
+                <strong style="color: #ffffff;">${inviterName}</strong> has invited you to join
+                <strong style="color: #ffffff;">${organizationName}</strong> on VoxNexus as a <strong style="color: #10b981;">${roleDisplay}</strong>.
+              </p>
+
+              <p style="margin: 0 0 24px 0; font-size: 14px; line-height: 22px; color: #64748b; text-align: center;">
+                VoxNexus is an AI-powered voice platform. Click below to set up your password and get started.
+              </p>
+
+              <!-- Button -->
+              <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                <tr>
+                  <td align="center" style="padding: 8px 0 24px 0;">
+                    <a href="${setupUrl}" style="display: inline-block; padding: 14px 32px; background-color: #10b981; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 600; border-radius: 8px;">
+                      Set Up Your Account
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin: 0 0 16px 0; font-size: 12px; line-height: 18px; color: #475569; text-align: center; word-break: break-all;">
+                Or copy this link: ${setupUrl}
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding-top: 32px; text-align: center;">
+              <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748b;">
+                &copy; 2026 Cothink LLC. All rights reserved.
+              </p>
+              <p style="margin: 0; font-size: 12px; color: #475569;">
+                <a href="${APP_URL}" style="color: #10b981; text-decoration: none;">voxnexus.pro</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+    `,
+    text: `
+You're Invited to VoxNexus!
+
+${inviterName} has invited you to join ${organizationName} on VoxNexus as a ${roleDisplay}.
+
+VoxNexus is an AI-powered voice platform. Visit this link to set up your password and get started:
+
+${setupUrl}
+
+© 2026 Cothink LLC. All rights reserved.
+    `,
+  };
+}
+
+export async function sendInviteEmail(
+  to: string,
+  organizationName: string,
+  inviterName: string,
+  role: string,
+  setupToken: string
+): Promise<boolean> {
+  const template = getInviteTemplate(organizationName, inviterName, role, setupToken);
+  return sendEmail(to, template);
+}

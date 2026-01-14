@@ -50,6 +50,10 @@ import redis.asyncio as aioredis
 
 # LiveKit
 from livekit import api as livekit_api
+from livekit import rtc as livekit_rtc
+
+# Guardian integration - sentiment analysis
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 # Logging setup
 import structlog
@@ -122,6 +126,562 @@ logger = structlog.get_logger("voxnexus.sip-bridge")
 
 
 # =============================================================================
+# Guardian Bridge - Real-time monitoring for SIP calls
+# =============================================================================
+
+# Risk keywords for Guardian detection
+RISK_KEYWORDS = {
+    "critical": ["lawsuit", "sue", "attorney", "lawyer", "legal action", "kill", "die", "threat"],
+    "high": ["cancel", "refund", "report", "complaint", "angry", "furious", "unacceptable"],
+    "medium": ["frustrated", "disappointed", "upset", "problem", "issue", "wrong", "bad"],
+}
+
+class GuardianBridge:
+    """
+    Bridge between SIP calls and the Guardian dashboard.
+
+    Publishes real-time events to Redis for dashboard visibility.
+    Listens for takeover commands to mute the local AI.
+    """
+
+    def __init__(self, redis_client: aioredis.Redis):
+        self.redis = redis_client
+        self.analyzer = SentimentIntensityAnalyzer()
+        self.sessions: Dict[str, dict] = {}  # conversation_id -> session data
+        self._takeover_listener_task: Optional[asyncio.Task] = None
+        self._takeover_callbacks: Dict[str, callable] = {}  # conversation_id -> callback
+        self._device_callbacks: Dict[str, callable] = {}  # device_id -> callback (fallback)
+
+    async def start_takeover_listener(self):
+        """Start listening for takeover commands from the dashboard."""
+        self._takeover_listener_task = asyncio.create_task(self._listen_for_takeovers())
+        logger.info("guardian_takeover_listener_started")
+
+    async def stop_takeover_listener(self):
+        """Stop the takeover listener."""
+        if self._takeover_listener_task:
+            self._takeover_listener_task.cancel()
+            try:
+                await self._takeover_listener_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _listen_for_takeovers(self):
+        """Listen for takeover commands on Redis channel."""
+        pubsub = self.redis.pubsub()
+        await pubsub.subscribe("guardian:takeover")
+
+        async for message in pubsub.listen():
+            if message["type"] != "message":
+                continue
+            try:
+                data = json.loads(message["data"])
+                conversation_id = data.get("conversation_id")
+                command = data.get("command", "takeover")
+
+                logger.info("guardian_command_received",
+                           conversation_id=conversation_id,
+                           command=command)
+
+                # Implement Redis lock to prevent race conditions on takeover
+                lock_key = f"guardian:takeover_lock:{conversation_id}"
+                lock_acquired = await self.redis.set(lock_key, "1", nx=True, ex=30)
+                
+                if not lock_acquired:
+                    logger.warning("takeover_locked_by_another_process",
+                                 conversation_id=conversation_id)
+                    continue  # Skip execution - another process has the lock
+
+                callback = None
+
+                # First try exact conversation_id match
+                if conversation_id and conversation_id in self._takeover_callbacks:
+                    callback = self._takeover_callbacks[conversation_id]
+                    logger.debug("takeover_matched_by_conversation_id", conversation_id=conversation_id)
+
+                # If no match, check if there's an active call on any device
+                # This handles the case where the worker's session ID differs from SIP bridge's conversation ID
+                if callback is None and self._device_callbacks:
+                    # Use the first (and typically only) active device callback
+                    # In practice, there's usually one active call per SIP bridge instance
+                    for device_id, device_callback in self._device_callbacks.items():
+                        logger.info("takeover_fallback_to_device",
+                                   conversation_id=conversation_id,
+                                   device_id=device_id)
+                        callback = device_callback
+                        break  # Use the first active device
+
+                try:
+                    if callback:
+                        if command == "takeover":
+                            await callback(mute=True)
+                        elif command == "release":
+                            await callback(mute=False)
+                    else:
+                        logger.warning("takeover_no_callback_found",
+                                      conversation_id=conversation_id,
+                                      registered_callbacks=list(self._takeover_callbacks.keys()),
+                                      registered_devices=list(self._device_callbacks.keys()))
+                finally:
+                    # CRITICAL: Always release the Redis lock after callback completes
+                    # Use delete (not del) for better atomicity
+                    await self.redis.delete(lock_key)
+                    logger.debug("takeover_lock_released", conversation_id=conversation_id)
+
+            except Exception as e:
+                logger.error("guardian_command_error", error=str(e))
+
+    def register_takeover_callback(self, conversation_id: str, callback: callable, device_id: str = None):
+        """Register a callback for takeover commands."""
+        self._takeover_callbacks[conversation_id] = callback
+        if device_id:
+            self._device_callbacks[device_id] = callback
+
+    def unregister_takeover_callback(self, conversation_id: str, device_id: str = None):
+        """Unregister a takeover callback."""
+        self._takeover_callbacks.pop(conversation_id, None)
+        if device_id:
+            self._device_callbacks.pop(device_id, None)
+
+    async def publish_event(self, event_type: str, data: dict):
+        """Publish an event to the guardian:events Redis channel."""
+        event = {
+            "type": event_type,
+            "timestamp": time.time(),
+            **data
+        }
+        try:
+            await self.redis.publish("guardian:events", json.dumps(event))
+            logger.debug("guardian_event_published", event_type=event_type)
+        except Exception as e:
+            logger.error("guardian_publish_failed", error=str(e))
+
+    def analyze_sentiment(self, text: str) -> dict:
+        """Analyze sentiment using VADER."""
+        scores = self.analyzer.polarity_scores(text)
+        return {
+            "compound": scores["compound"],
+            "positive": scores["pos"],
+            "negative": scores["neg"],
+            "neutral": scores["neu"],
+        }
+
+    def detect_risk_keywords(self, text: str) -> tuple[str, list]:
+        """Detect risk keywords in text. Returns (risk_level, keywords_found)."""
+        text_lower = text.lower()
+
+        for level in ["critical", "high", "medium"]:
+            found = [kw for kw in RISK_KEYWORDS[level] if kw in text_lower]
+            if found:
+                return level.upper(), found  # UPPERCASE to match Prisma enum
+
+        return "LOW", []  # UPPERCASE to match Prisma enum
+
+    async def on_session_start(self, conversation_id: str, device_id: str, room_name: str,
+                               remote_uri: str = "", agent_name: str = "AI Agent"):
+        """Called when a call/conversation starts."""
+        self.sessions[conversation_id] = {
+            "device_id": device_id,
+            "room_name": room_name,
+            "remote_uri": remote_uri,
+            "agent_name": agent_name,
+            "start_time": time.time(),
+            "message_count": 0,
+            "avg_sentiment": 0.0,
+            "max_risk_level": "LOW",  # Initialize as UPPERCASE to match Prisma enum
+            "human_active": False,
+        }
+
+        await self.publish_event("session_start", {
+            "sessionId": conversation_id,
+            "roomName": room_name,
+            "deviceId": device_id,
+            "remoteUri": remote_uri,
+            "agentName": agent_name,
+        })
+
+        logger.info("guardian_session_started",
+                   conversation_id=conversation_id,
+                   room_name=room_name)
+
+    async def on_transcript(self, conversation_id: str, text: str, speaker: str = "user"):
+        """Called when a transcript is received."""
+        if conversation_id not in self.sessions:
+            return
+
+        session = self.sessions[conversation_id]
+        session["message_count"] += 1
+
+        # Analyze sentiment
+        sentiment = self.analyze_sentiment(text)
+        compound = sentiment["compound"]
+
+        # Update running average
+        n = session["message_count"]
+        session["avg_sentiment"] = ((session["avg_sentiment"] * (n - 1)) + compound) / n
+
+        # Detect risk keywords
+        risk_level, keywords = self.detect_risk_keywords(text)
+        
+        # Ensure session max risk level is uppercase for comparison
+        current_max = session["max_risk_level"].upper()
+        
+        # Update max risk level if new level is higher
+        risk_order = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        if risk_order.index(risk_level) > risk_order.index(current_max):
+            session["max_risk_level"] = risk_level  # Store in uppercase
+
+        # Always publish sentiment update
+        await self.publish_event("sentiment_update", {
+            "sessionId": conversation_id,
+            "sentiment": compound,
+            "avgSentiment": session["avg_sentiment"],
+            "messageCount": session["message_count"],
+            "speaker": speaker,
+            "text": text[:100],  # Truncate for privacy
+        })
+
+        # Publish risk event if keywords found
+        if risk_level != "low":
+            await self.publish_event("risk_detected", {
+                "sessionId": conversation_id,
+                "level": risk_level.upper(),
+                "keywords": keywords,
+                "sentiment": compound,
+                "text": text[:200],
+                "category": "keyword_match",
+            })
+
+            logger.warning("guardian_risk_detected",
+                          conversation_id=conversation_id,
+                          level=risk_level,
+                          keywords=keywords)
+
+    async def on_takeover(self, conversation_id: str, operator_name: str = "Operator"):
+        """Called when a human operator takes over."""
+        if conversation_id in self.sessions:
+            self.sessions[conversation_id]["human_active"] = True
+
+        await self.publish_event("takeover", {
+            "sessionId": conversation_id,
+            "operatorName": operator_name,
+        })
+
+        logger.info("guardian_takeover", conversation_id=conversation_id)
+
+    async def on_release(self, conversation_id: str):
+        """Called when control is released back to AI."""
+        if conversation_id in self.sessions:
+            self.sessions[conversation_id]["human_active"] = False
+
+        await self.publish_event("release", {
+            "sessionId": conversation_id,
+        })
+
+        logger.info("guardian_release", conversation_id=conversation_id)
+
+    async def on_session_end(self, conversation_id: str, device_id: str = None):
+        """Called when a call/conversation ends."""
+        session = self.sessions.pop(conversation_id, None)
+        
+        # CRITICAL: Clean up any orphaned Redis locks when session ends
+        lock_key = f"guardian:takeover_lock:{conversation_id}"
+        await self.redis.delete(lock_key)
+
+        await self.publish_event("session_end", {
+            "sessionId": conversation_id,
+            "duration": time.time() - session["start_time"] if session else 0,
+            "messageCount": session["message_count"] if session else 0,
+            "avgSentiment": session["avg_sentiment"] if session else 0,
+            "maxRiskLevel": session["max_risk_level"] if session else "LOW",
+        })
+
+        self.unregister_takeover_callback(conversation_id, device_id=device_id)
+        logger.info("guardian_session_ended", conversation_id=conversation_id)
+
+
+# Global Guardian instance (initialized in app lifespan)
+guardian: Optional[GuardianBridge] = None
+
+
+# =============================================================================
+# LiveKit Audio Bridge - bridges SIP audio to LiveKit for operator takeover
+# =============================================================================
+
+class LiveKitAudioBridge:
+    """
+    Bridges audio between PJSUA2 (SIP) and LiveKit (WebRTC).
+
+    When an operator takes over a call:
+    - Caller's audio (from PJSUA2) is published to the LiveKit room
+    - Operator's audio (from LiveKit) is played to the caller via PJSUA2
+    """
+
+    SAMPLE_RATE = 48000  # LiveKit standard
+    NUM_CHANNELS = 1
+    FRAME_DURATION_MS = 20  # 20ms frames
+    SAMPLES_PER_FRAME = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960 samples
+
+    def __init__(self, room_name: str, conversation_id: str):
+        self.room_name = room_name
+        self.conversation_id = conversation_id
+        self.room: Optional[livekit_rtc.Room] = None
+        self.audio_source: Optional[livekit_rtc.AudioSource] = None
+        self.local_track: Optional[livekit_rtc.LocalAudioTrack] = None
+        self.connected = False
+        self._audio_task: Optional[asyncio.Task] = None
+        self._incoming_audio_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+        self._running = False
+        self._track_ready = False  # Flag to indicate track is ready for audio frames
+
+        logger.info("livekit_audio_bridge_created",
+                   room_name=room_name,
+                   conversation_id=conversation_id)
+
+    async def connect(self) -> bool:
+        """Connect to the LiveKit room and start publishing audio."""
+        if not LIVEKIT_URL or not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+            logger.error("livekit_not_configured")
+            return False
+
+        try:
+            # Generate access token for the SIP bridge participant
+            token = livekit_api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+            token.with_identity(f"sip-bridge-{self.conversation_id[:8]}")
+            token.with_name("Caller (SIP)")
+            token.with_grants(livekit_api.VideoGrants(
+                room_join=True,
+                room=self.room_name,
+                can_publish=True,
+                can_subscribe=True,
+                can_publish_data=True,
+            ))
+            jwt_token = token.to_jwt()
+
+            # Create and connect to room
+            self.room = livekit_rtc.Room()
+
+            # Set up event handlers before connecting
+            @self.room.on("track_subscribed")
+            def on_track_sub(track, publication, participant):
+                logger.info("livekit_track_subscribed_event",
+                           participant=participant.identity,
+                           track_kind=str(track.kind),
+                           room=self.room_name)
+                if track.kind == livekit_rtc.TrackKind.KIND_AUDIO:
+                    asyncio.create_task(self._process_incoming_audio(track))
+
+            @self.room.on("participant_connected")
+            def on_participant(participant):
+                logger.info("livekit_participant_joined",
+                           participant=participant.identity,
+                           room=self.room_name)
+
+            @self.room.on("disconnected")
+            def on_disconnect():
+                self._on_disconnected()
+
+            logger.info("livekit_connecting", room=self.room_name)
+
+            # Set _running BEFORE connecting, so track_subscribed handler doesn't exit early
+            self._running = True
+
+            await self.room.connect(LIVEKIT_URL, jwt_token)
+
+            logger.info("livekit_connected", room=self.room_name)
+
+            # Create audio source for publishing caller audio
+            self.audio_source = livekit_rtc.AudioSource(
+                sample_rate=self.SAMPLE_RATE,
+                num_channels=self.NUM_CHANNELS
+            )
+
+            # Create and publish local audio track
+            self.local_track = livekit_rtc.LocalAudioTrack.create_audio_track(
+                "caller-audio",
+                self.audio_source
+            )
+
+            publication = await self.room.local_participant.publish_track(self.local_track)
+
+            logger.info("livekit_audio_track_published", room=self.room_name, track_sid=publication.sid if publication else "unknown")
+
+            # Wait a moment for track to be ready
+            await asyncio.sleep(0.5)
+
+            self.connected = True
+            self._track_ready = True  # Flag to indicate track is ready for frames
+            return True
+
+        except Exception as e:
+            self._running = False  # Reset if connection failed
+            logger.error("livekit_connect_failed", error=str(e), room=self.room_name)
+            return False
+
+    async def disconnect(self):
+        """Disconnect from LiveKit room."""
+        self._running = False
+        self._track_ready = False  # Stop sending frames immediately
+
+        if self._audio_task:
+            self._audio_task.cancel()
+            try:
+                await self._audio_task
+            except asyncio.CancelledError:
+                pass
+
+        if self.room:
+            await self.room.disconnect()
+            self.room = None
+
+        self.connected = False
+        logger.info("livekit_disconnected", room=self.room_name)
+
+    async def send_audio(self, audio_data: bytes, sample_rate: int = 16000):
+        """
+        Send audio data from PJSUA2 to LiveKit.
+        Resamples from PJSUA2's sample rate to LiveKit's 48kHz.
+        """
+        if not self.connected or not self.audio_source or not self._track_ready:
+            return
+
+        try:
+            import numpy as np
+
+            # Convert bytes to numpy array (16-bit PCM)
+            samples = np.frombuffer(audio_data, dtype=np.int16)
+
+            # Resample if needed (PJSUA2 typically uses 8kHz or 16kHz)
+            if sample_rate != self.SAMPLE_RATE:
+                # Simple linear resampling
+                ratio = self.SAMPLE_RATE / sample_rate
+                new_length = int(len(samples) * ratio)
+                indices = np.linspace(0, len(samples) - 1, new_length)
+                samples = np.interp(indices, np.arange(len(samples)), samples).astype(np.int16)
+
+            # Create audio frame and send
+            frame = livekit_rtc.AudioFrame(
+                data=samples.tobytes(),
+                sample_rate=self.SAMPLE_RATE,
+                num_channels=self.NUM_CHANNELS,
+                samples_per_channel=len(samples)
+            )
+
+            await self.audio_source.capture_frame(frame)
+
+        except Exception as e:
+            logger.debug("livekit_send_audio_error", error=str(e))
+
+    def get_incoming_audio_nowait(self) -> Optional[bytes]:
+        """
+        Get incoming audio from LiveKit (operator's voice) without blocking.
+        Returns audio data as 16-bit PCM at 8kHz for PJSUA2, or None if queue empty.
+        """
+        try:
+            return self._incoming_audio_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+
+    async def get_incoming_audio(self) -> Optional[bytes]:
+        """
+        Get incoming audio from LiveKit (operator's voice).
+        Returns audio data as 16-bit PCM at 8kHz for PJSUA2.
+        """
+        try:
+            audio_data = await asyncio.wait_for(
+                self._incoming_audio_queue.get(),
+                timeout=0.05  # Reduced timeout
+            )
+            return audio_data
+        except asyncio.TimeoutError:
+            return None
+
+    def _on_track_subscribed(self, track: livekit_rtc.Track,
+                              publication: livekit_rtc.RemoteTrackPublication,
+                              participant: livekit_rtc.RemoteParticipant):
+        """Handle incoming audio track subscription."""
+        if track.kind == livekit_rtc.TrackKind.KIND_AUDIO:
+            logger.info("livekit_audio_track_subscribed",
+                       participant=participant.identity,
+                       room=self.room_name)
+
+            # Start processing incoming audio
+            asyncio.create_task(self._process_incoming_audio(track))
+
+    async def _process_incoming_audio(self, track: livekit_rtc.Track):
+        """Process incoming audio from a subscribed track."""
+        logger.info("livekit_processing_incoming_audio_started", room=self.room_name)
+        frame_count = 0
+
+        try:
+            audio_stream = livekit_rtc.AudioStream(track)
+
+            async for event in audio_stream:
+                if not self._running:
+                    break
+
+                frame_count += 1
+
+                try:
+                    import numpy as np
+
+                    # AudioStream yields AudioFrameEvent objects, not raw frames
+                    # The frame is accessible via event.frame
+                    frame = event.frame
+
+                    if frame_count == 1 or frame_count % 100 == 0:
+                        logger.info("livekit_incoming_audio_frame",
+                                   room=self.room_name,
+                                   frame_count=frame_count,
+                                   sample_rate=frame.sample_rate,
+                                   samples_per_channel=frame.samples_per_channel,
+                                   num_channels=frame.num_channels)
+
+                    # Get audio data from frame
+                    samples = np.frombuffer(frame.data, dtype=np.int16).astype(np.float32)
+
+                    # Proper downsampling from 48kHz to 8kHz with anti-aliasing
+                    if frame.sample_rate != 8000:
+                        downsample_factor = frame.sample_rate // 8000  # 6 for 48kHz
+
+                        # Anti-aliasing: apply moving average filter before decimation
+                        # This acts as a simple low-pass filter to prevent aliasing
+                        if downsample_factor > 1:
+                            # Pad to make length divisible by factor
+                            pad_len = (downsample_factor - len(samples) % downsample_factor) % downsample_factor
+                            if pad_len > 0:
+                                samples = np.pad(samples, (0, pad_len), mode='constant')
+
+                            # Reshape and average (box filter anti-aliasing)
+                            samples = samples.reshape(-1, downsample_factor).mean(axis=1)
+
+                    # Convert back to int16
+                    samples = np.clip(samples, -32768, 32767).astype(np.int16)
+
+                    # Queue the audio for playback
+                    try:
+                        self._incoming_audio_queue.put_nowait(samples.tobytes())
+                    except asyncio.QueueFull:
+                        pass  # Drop frames if queue is full
+
+                except Exception as e:
+                    logger.debug("livekit_process_audio_error", error=str(e))
+
+        except Exception as e:
+            logger.error("livekit_audio_stream_error", error=str(e))
+        finally:
+            logger.info("livekit_processing_incoming_audio_ended",
+                       room=self.room_name,
+                       total_frames=frame_count)
+
+    def _on_disconnected(self):
+        """Handle disconnection from LiveKit."""
+        logger.info("livekit_room_disconnected", room=self.room_name)
+        self.connected = False
+        self._running = False
+
+
+# =============================================================================
 # Data Models
 # =============================================================================
 
@@ -152,6 +712,7 @@ class CallInfo:
     """Information about an active call."""
     call_id: str
     device_id: str
+    agent_config_id: str  # Agent ID for TTS/LLM config lookup
     direction: str
     remote_uri: str
     remote_name: Optional[str]
@@ -195,11 +756,20 @@ class AIConversationHandler:
 
         # Greeting and system prompt will be fetched fresh from database
         self.greeting_text = device_config.greeting_text
+        # TTS config from agent - None means use default OpenAI
+        self.tts_config: Optional[dict] = None
         self.system_prompt = ""  # Will be loaded from agent config
 
         # Conversation tracking for metrics
         self.conversation_id: Optional[str] = None
         self.call_start_time: Optional[datetime] = None
+
+        # Guardian takeover state - when True, AI is muted and human is speaking
+        self.muted = False
+
+        # LiveKit audio bridge for operator takeover
+        self.livekit_bridge: Optional[LiveKitAudioBridge] = None
+        self._bridge_audio_task: Optional[asyncio.Task] = None
 
     async def _fetch_agent_config_from_db(self) -> tuple[str, str]:
         """Fetch the latest greeting and system prompt from database."""
@@ -220,22 +790,32 @@ IMPORTANT: Keep ALL responses under 2 sentences. This is a phone call - be extre
                 if row and row['greeting_text']:
                     greeting = row['greeting_text']
 
-                # Get system prompt from agent_configs
+                # Get system prompt and TTS config from agent_configs
                 agent_row = await conn.fetchrow(
-                    """SELECT ac.name, ac.system_prompt
+                    """SELECT ac.name, ac.system_prompt, ac.tts_config
                        FROM agent_configs ac
                        JOIN sip_devices sd ON sd.agent_config_id = ac.id
                        WHERE sd.id = $1""",
                     self.device_config.id
                 )
-                if agent_row and agent_row['system_prompt']:
-                    # Append phone-specific instructions to the agent's system prompt
-                    system_prompt = agent_row['system_prompt'] + """
+                if agent_row:
+                    if agent_row['system_prompt']:
+                        # Append phone-specific instructions to the agent's system prompt
+                        system_prompt = agent_row['system_prompt'] + """
 
 PHONE CALL INSTRUCTIONS:
 - Keep ALL responses under 2 sentences. This is a phone call.
 - Maximum 25 words per response.
 - Be concise and conversational."""
+
+                    # Load TTS config if present
+                    if agent_row['tts_config']:
+                        try:
+                            self.tts_config = json.loads(agent_row['tts_config']) if isinstance(agent_row['tts_config'], str) else agent_row['tts_config']
+                            logger.info("loaded_tts_config", provider=self.tts_config.get('provider'), voice_id=self.tts_config.get('voice_id'))
+                        except (json.JSONDecodeError, TypeError) as e:
+                            logger.error("tts_config_parse_error", error=str(e))
+
                     logger.info("loaded_agent_config", agent_name=agent_row['name'])
 
         except Exception as e:
@@ -307,6 +887,203 @@ PHONE CALL INSTRUCTIONS:
         except Exception as e:
             logger.error("save_message_failed", error=str(e), role=role)
 
+    async def _handle_takeover(self, mute: bool):
+        """Handle takeover/release commands from Guardian dashboard."""
+        # Prevent duplicate takeover commands
+        if mute and self.muted and self.livekit_bridge:
+            logger.debug("takeover_already_active", conversation_id=self.conversation_id)
+            return
+
+        self.muted = mute
+        if mute:
+            logger.info("ai_muted_by_operator", conversation_id=self.conversation_id)
+            # Stop any ongoing playback
+            await self._stop_playback()
+
+            # Play takeover announcement directly to caller (not via LiveKit)
+            await self._speak_response("A human operator is joining the call. Please hold.")
+
+            # Clean up any existing bridge first
+            if self.livekit_bridge:
+                await self.livekit_bridge.disconnect()
+                self.livekit_bridge = None
+
+            # Start LiveKit audio bridge for operator to speak with caller
+            room_name = f"sip-bridge-{self.device_config.id}"
+            self.livekit_bridge = LiveKitAudioBridge(room_name, self.conversation_id)
+            connected = await self.livekit_bridge.connect()
+
+            if connected:
+                logger.info("livekit_bridge_started", conversation_id=self.conversation_id)
+                # Start audio bridging task
+                self._bridge_audio_task = asyncio.create_task(self._run_audio_bridge())
+            else:
+                logger.error("livekit_bridge_failed_to_connect", conversation_id=self.conversation_id)
+                self.livekit_bridge = None
+        else:
+            logger.info("ai_unmuted_by_operator", conversation_id=self.conversation_id)
+
+            # Stop audio bridge with proper cleanup
+            if self._bridge_audio_task:
+                self._bridge_audio_task.cancel()
+                try:
+                    await asyncio.wait_for(self._bridge_audio_task, timeout=2.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    logger.warning("audio_bridge_task_force_terminated")
+                finally:
+                    self._bridge_audio_task = None
+
+            if self.livekit_bridge:
+                await self.livekit_bridge.disconnect()
+                self.livekit_bridge = None
+                logger.info("livekit_bridge_stopped", conversation_id=self.conversation_id)
+
+    async def _run_audio_bridge(self):
+        """
+        Run the audio bridge loop - streams audio between PJSUA2 and LiveKit.
+        """
+        logger.info("audio_bridge_loop_started", conversation_id=self.conversation_id)
+
+        # Create a dedicated recorder for bridging
+        bridge_recorder: Optional[pj.AudioMediaRecorder] = None
+        bridge_record_file = self.temp_dir / "bridge_audio.wav"
+        last_read_position = 44  # Skip WAV header
+
+        # Buffer for accumulating operator audio
+        operator_audio_buffer = bytearray()
+        buffer_threshold = 8000 * 2 * 0.2  # 200ms of audio at 8kHz, 16-bit mono = 3200 bytes
+        last_play_time = time.time()
+
+        try:
+            # Start recording for the bridge
+            bridge_recorder = pj.AudioMediaRecorder()
+            bridge_recorder.createRecorder(str(bridge_record_file))
+            self.call_audio_media.startTransmit(bridge_recorder)
+            logger.info("bridge_recording_started")
+
+            loop_count = 0
+            while self.muted and self.running:
+                loop_count += 1
+
+                # Check if task was cancelled (handles graceful shutdown)
+                if asyncio.current_task().cancelled():
+                    logger.info("audio_bridge_task_cancelled_during_loop")
+                    break
+
+                # ===== CALLER → OPERATOR (PJSUA2 → LiveKit) =====
+                # Read new audio data from the recording file and send to LiveKit
+                if bridge_record_file.exists():
+                    file_size = bridge_record_file.stat().st_size
+                    if file_size > last_read_position:
+                        with open(bridge_record_file, 'rb') as f:
+                            f.seek(last_read_position)
+                            audio_chunk = f.read(file_size - last_read_position)
+                            last_read_position = file_size
+
+                            if audio_chunk and self.livekit_bridge:
+                                # Send to LiveKit (16kHz mono PCM from PJSUA2 conference bridge)
+                                await self.livekit_bridge.send_audio(audio_chunk, sample_rate=16000)
+
+                # ===== OPERATOR → CALLER (LiveKit → PJSUA2) =====
+                # Drain the queue into buffer (non-blocking)
+                if self.livekit_bridge:
+                    drained = 0
+                    while True:
+                        incoming_audio = self.livekit_bridge.get_incoming_audio_nowait()
+                        if incoming_audio:
+                            operator_audio_buffer.extend(incoming_audio)
+                            drained += 1
+                        else:
+                            break
+
+                    if loop_count == 1 or loop_count % 100 == 0:
+                        logger.info("audio_bridge_loop_status",
+                                   loop_count=loop_count,
+                                   buffer_size=len(operator_audio_buffer),
+                                   drained_this_loop=drained,
+                                   queue_size=self.livekit_bridge._incoming_audio_queue.qsize())
+
+                # Play accumulated audio when we have enough or after timeout
+                current_time = time.time()
+                should_play = (
+                    len(operator_audio_buffer) >= buffer_threshold or
+                    (len(operator_audio_buffer) > 0 and current_time - last_play_time > 0.15)
+                )
+
+                if should_play and len(operator_audio_buffer) > 320:  # At least 20ms
+                    # Take the buffered audio
+                    audio_to_play = bytes(operator_audio_buffer)
+                    operator_audio_buffer.clear()
+                    last_play_time = current_time
+
+                    logger.info("bridge_playing_operator_audio",
+                               audio_len=len(audio_to_play),
+                               conversation_id=self.conversation_id)
+
+                    # Play the buffered audio to caller (don't await - let it play async)
+                    await self._play_bridge_audio(audio_to_play)
+
+                await asyncio.sleep(0.01)  # 10ms loop for faster response
+
+        except asyncio.CancelledError:
+            logger.info("audio_bridge_loop_cancelled")
+        except Exception as e:
+            logger.error("audio_bridge_loop_error", error=str(e))
+        finally:
+            # Cleanup bridge recorder
+            if bridge_recorder:
+                try:
+                    self.call_audio_media.stopTransmit(bridge_recorder)
+                    del bridge_recorder
+                except Exception:
+                    pass
+
+            # Remove temp file
+            try:
+                if bridge_record_file.exists():
+                    bridge_record_file.unlink()
+            except Exception:
+                pass
+
+            logger.info("audio_bridge_loop_ended", conversation_id=self.conversation_id)
+
+    async def _play_bridge_audio(self, audio_data: bytes):
+        """Play incoming bridge audio to the caller."""
+        if not audio_data or len(audio_data) < 320:  # At least 20ms of audio
+            return
+
+        try:
+            # Create temp WAV file with the audio data (8kHz, mono, 16-bit)
+            temp_wav = self.temp_dir / f"bridge_play_{int(time.time() * 1000000)}.wav"
+
+            with wave.open(str(temp_wav), 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)  # 16-bit
+                wf.setframerate(8000)  # 8kHz for SIP/PJSUA2
+                wf.writeframes(audio_data)
+
+            # Play the audio
+            player = pj.AudioMediaPlayer()
+            player.createPlayer(str(temp_wav), pj.PJMEDIA_FILE_NO_LOOP)
+            player.startTransmit(self.call_audio_media)
+
+            # Calculate duration and wait
+            duration = len(audio_data) / (8000 * 2)  # 8kHz, 16-bit
+            await asyncio.sleep(duration)
+
+            # Cleanup
+            player.stopTransmit(self.call_audio_media)
+            del player
+
+            # Remove temp file
+            try:
+                temp_wav.unlink()
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.debug("play_bridge_audio_error", error=str(e))
+
     async def start(self):
         """Start the conversation handler."""
         self.running = True
@@ -326,6 +1103,24 @@ PHONE CALL INSTRUCTIONS:
             system_prompt_length=len(self.system_prompt)
         )
 
+        # Register with Guardian for dashboard visibility and takeover
+        if guardian and self.conversation_id:
+            room_name = f"sip-bridge-{self.device_config.id}"
+            remote_uri = self.call.call_info.remote_uri if self.call.call_info else ""
+            await guardian.on_session_start(
+                conversation_id=self.conversation_id,
+                device_id=self.device_config.id,
+                room_name=room_name,
+                remote_uri=remote_uri,
+                agent_name="SIP AI Agent"
+            )
+            # Register takeover callback (by both conversation_id and device_id)
+            guardian.register_takeover_callback(
+                self.conversation_id,
+                self._handle_takeover,
+                device_id=self.device_config.id
+            )
+
         # Play greeting
         await self._speak_response(self.greeting_text)
 
@@ -336,6 +1131,23 @@ PHONE CALL INSTRUCTIONS:
         """Stop the conversation handler."""
         self.running = False
         await self._stop_recording()
+
+        # Stop audio bridge if active
+        if self._bridge_audio_task:
+            self._bridge_audio_task.cancel()
+            try:
+                await self._bridge_audio_task
+            except asyncio.CancelledError:
+                pass
+            self._bridge_audio_task = None
+
+        if self.livekit_bridge:
+            await self.livekit_bridge.disconnect()
+            self.livekit_bridge = None
+
+        # Notify Guardian of session end
+        if guardian and self.conversation_id:
+            await guardian.on_session_end(self.conversation_id, device_id=self.device_config.id)
 
         # End conversation in database
         await self._end_conversation()
@@ -374,6 +1186,17 @@ PHONE CALL INSTRUCTIONS:
                 self.recorder = None
             except Exception as e:
                 logger.error("recording_stop_failed", error=str(e))
+
+    async def _stop_playback(self):
+        """Stop any current audio playback (used for takeover)."""
+        if self.player:
+            try:
+                self.player.stopTransmit(self.call_audio_media)
+                del self.player
+                self.player = None
+                logger.info("playback_stopped_for_takeover")
+            except Exception as e:
+                logger.error("playback_stop_failed", error=str(e))
 
     def _check_vad(self) -> bool:
         """Check audio file for voice activity, return True if user finished speaking."""
@@ -458,8 +1281,18 @@ PHONE CALL INSTRUCTIONS:
 
         logger.info("transcript_received", text=transcript)
 
+        # Send transcript to Guardian for sentiment analysis (always, even if muted)
+        if guardian and self.conversation_id:
+            await guardian.on_transcript(self.conversation_id, transcript, speaker="user")
+
         # Save user message to database
         await self._save_message("user", transcript)
+
+        # If muted (human takeover), don't process AI response
+        if self.muted:
+            logger.info("ai_muted_skipping_response", conversation_id=self.conversation_id)
+            await self._start_recording()
+            return
 
         # Get AI response
         response = await self._get_ai_response(transcript)
@@ -468,8 +1301,18 @@ PHONE CALL INSTRUCTIONS:
 
         logger.info("ai_response", text=response)
 
+        # Send AI response to Guardian too
+        if guardian and self.conversation_id:
+            await guardian.on_transcript(self.conversation_id, response, speaker="assistant")
+
         # Save assistant response to database
         await self._save_message("assistant", response)
+
+        # Check again if muted before speaking (might have changed during AI processing)
+        if self.muted:
+            logger.info("ai_muted_skipping_tts", conversation_id=self.conversation_id)
+            await self._start_recording()
+            return
 
         # Generate TTS and play
         await self._speak_response(response)
@@ -611,12 +1454,52 @@ PHONE CALL INSTRUCTIONS:
                 else:
                     text = cut_text + "..."
 
-            # Generate TTS audio using OpenAI (faster than Kokoro)
-            tts_file = self.temp_dir / f"response_{int(time.time())}.mp3"
-
             tts_start = time.time()
-            logger.info("tts_request_start", text_length=len(text), provider="openai")
 
+            # Check if voxclone is configured
+            if self.tts_config and self.tts_config.get('provider') == 'voxclone':
+                audio_data = await self._tts_voxclone(text)
+            else:
+                audio_data = await self._tts_openai(text)
+
+            if audio_data:
+                tts_latency_ms = int((time.time() - tts_start) * 1000)
+                logger.info("tts_complete", latency_ms=tts_latency_ms, provider=self.tts_config.get('provider') if self.tts_config else 'openai')
+
+                # Save the audio
+                tts_file = self.temp_dir / f"response_{int(time.time())}.wav"
+                with open(tts_file, 'wb') as f:
+                    f.write(audio_data)
+
+                logger.info("tts_file_saved", file=str(tts_file), size=tts_file.stat().st_size)
+
+                # Convert to 8kHz WAV for SIP
+                tts_8k_file = self.temp_dir / f"response_8k_{int(time.time())}.wav"
+
+                import subprocess
+                result = subprocess.run([
+                    'ffmpeg', '-y', '-i', str(tts_file),
+                    '-ar', '8000', '-ac', '1', '-acodec', 'pcm_s16le',
+                    str(tts_8k_file)
+                ], capture_output=True, timeout=10)
+
+                if result.returncode == 0 and tts_8k_file.exists():
+                    logger.info("audio_conversion_success", file=str(tts_8k_file))
+                    play_file = tts_8k_file
+                else:
+                    logger.error("audio_conversion_failed", stderr=result.stderr.decode()[:200])
+                    play_file = tts_file
+
+                # Play the audio
+                await self._play_audio(str(play_file))
+
+        except Exception as e:
+            logger.error("speak_error", error=str(e), error_type=type(e).__name__)
+
+    async def _tts_openai(self, text: str) -> Optional[bytes]:
+        """Generate TTS using OpenAI."""
+        logger.info("tts_request_start", text_length=len(text), provider="openai")
+        try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.post(
                     "https://api.openai.com/v1/audio/speech",
@@ -628,47 +1511,125 @@ PHONE CALL INSTRUCTIONS:
                         'model': 'tts-1',
                         'input': text,
                         'voice': 'nova',
-                        'response_format': 'mp3',
-                        'speed': 1.15  # Slightly faster speech
+                        'response_format': 'wav',
+                        'speed': 1.15
                     }
                 )
 
-                tts_latency_ms = int((time.time() - tts_start) * 1000)
-                logger.info("tts_response", status=response.status_code, content_length=len(response.content), latency_ms=tts_latency_ms)
-
                 if response.status_code == 200 and len(response.content) > 500:
-                    # Save the audio
-                    with open(tts_file, 'wb') as f:
-                        f.write(response.content)
-
-                    logger.info("tts_file_saved", file=str(tts_file), size=tts_file.stat().st_size)
-
-                    # Convert MP3 to 8kHz WAV for SIP using ffmpeg (faster than sox for mp3)
-                    tts_8k_file = self.temp_dir / f"response_8k_{int(time.time())}.wav"
-
-                    import subprocess
-                    result = subprocess.run([
-                        'ffmpeg', '-y', '-i', str(tts_file),
-                        '-ar', '8000', '-ac', '1', '-acodec', 'pcm_s16le',
-                        str(tts_8k_file)
-                    ], capture_output=True, timeout=10)
-
-                    if result.returncode == 0 and tts_8k_file.exists():
-                        logger.info("audio_conversion_success", file=str(tts_8k_file))
-                        play_file = tts_8k_file
-                    else:
-                        logger.error("audio_conversion_failed", stderr=result.stderr.decode()[:200])
-                        # Try playing original if conversion fails
-                        play_file = tts_file
-
-                    # Play the audio
-                    await self._play_audio(str(play_file))
-
+                    return response.content
                 else:
-                    logger.error("tts_failed", status=response.status_code, content_length=len(response.content))
+                    logger.error("tts_openai_failed", status=response.status_code)
+                    return None
+        except Exception as e:
+            logger.error("tts_openai_error", error=str(e))
+            return None
+
+    async def _tts_voxclone(self, text: str) -> Optional[bytes]:
+        """Generate TTS using VoxClone voice cloning service."""
+        voice_id = self.tts_config.get('voice_id') if self.tts_config else None
+        if not voice_id:
+            logger.warning("voxclone_no_voice_id, falling back to openai")
+            return await self._tts_openai(text)
+
+        logger.info("tts_request_start", text_length=len(text), provider="voxclone", voice_id=voice_id)
+
+        # Look up the voice profile to get the reference audio path
+        try:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT reference_audio_url FROM voice_profiles WHERE id = $1",
+                    voice_id
+                )
+                if not row:
+                    logger.error("voxclone_voice_not_found", voice_id=voice_id)
+                    return await self._tts_openai(text)
+
+                reference_audio_url = row['reference_audio_url']
+                # Convert URL path to file path
+                reference_audio_path = f"/var/www/voxnexus/apps/web/public{reference_audio_url}"
+
+                if not Path(reference_audio_path).exists():
+                    logger.error("voxclone_reference_audio_missing", path=reference_audio_path)
+                    return await self._tts_openai(text)
 
         except Exception as e:
-            logger.error("speak_error", error=str(e), error_type=type(e).__name__)
+            logger.error("voxclone_db_error", error=str(e))
+            return await self._tts_openai(text)
+
+        # Call voxclone service
+        voxclone_url = os.getenv("VOXCLONE_API_URL", "http://localhost:8002")
+        license_key = os.getenv("VOXNEXUS_LICENSE_KEY", "")
+        try:
+            import base64
+            import subprocess
+            import tempfile
+
+            # Check if we need to convert the audio (browser records WebM)
+            # Convert to proper WAV format using ffmpeg
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_wav:
+                tmp_wav_path = tmp_wav.name
+
+            convert_result = subprocess.run([
+                'ffmpeg', '-y', '-i', reference_audio_path,
+                '-ar', '24000', '-ac', '1', '-acodec', 'pcm_s16le',
+                tmp_wav_path
+            ], capture_output=True, timeout=10)
+
+            if convert_result.returncode == 0:
+                audio_path_to_use = tmp_wav_path
+                logger.info("reference_audio_converted", original=reference_audio_path)
+            else:
+                # Use original if conversion fails
+                audio_path_to_use = reference_audio_path
+                logger.warning("reference_audio_conversion_failed", stderr=convert_result.stderr.decode()[:100])
+
+            # Read and base64 encode the reference audio
+            with open(audio_path_to_use, 'rb') as f:
+                audio_bytes = f.read()
+                audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+            # Clean up temp file
+            if audio_path_to_use != reference_audio_path:
+                try:
+                    os.unlink(tmp_wav_path)
+                except:
+                    pass
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                headers = {
+                    'Content-Type': 'application/json',
+                    'X-VoxNexus-License': license_key
+                } if license_key else {'Content-Type': 'application/json'}
+
+                response = await client.post(
+                    f"{voxclone_url}/v1/clone",
+                    json={
+                        'text': text,
+                        'reference_audio_base64': audio_base64,
+                        'speed': 1.0,
+                        'sample_rate': 24000
+                    },
+                    headers=headers
+                )
+
+                if response.status_code == 200:
+                    # Response is JSON with base64 audio
+                    result = response.json()
+                    if 'audio_base64' in result:
+                        audio_data = base64.b64decode(result['audio_base64'])
+                        logger.info("voxclone_success", content_length=len(audio_data))
+                        return audio_data
+                    else:
+                        logger.error("voxclone_no_audio_in_response")
+                        return await self._tts_openai(text)
+                else:
+                    logger.error("voxclone_failed", status=response.status_code, body=response.text[:200])
+                    return await self._tts_openai(text)
+
+        except Exception as e:
+            logger.error("voxclone_error", error=str(e))
+            return await self._tts_openai(text)
 
     async def _play_audio(self, audio_file: str):
         """Play audio file through the SIP call."""
@@ -878,6 +1839,7 @@ if PJSUA_AVAILABLE:
             call.call_info = CallInfo(
                 call_id=ci.callIdString,
                 device_id=self.device_config.id,
+                agent_config_id=self.device_config.agent_config_id,
                 direction="inbound",
                 remote_uri=ci.remoteUri,
                 remote_name=ci.remoteContact or None,
@@ -1137,19 +2099,22 @@ class SipBridgeManager:
     async def _create_livekit_room(self, room_name: str, call_info: CallInfo):
         """Create a LiveKit room for the SIP call."""
         try:
-            room_service = livekit_api.RoomServiceClient(
-                LIVEKIT_URL.replace("wss://", "https://").replace("ws://", "http://"),
-                LIVEKIT_API_KEY,
-                LIVEKIT_API_SECRET
+            # Use the new LiveKitAPI interface (v1.1.0+)
+            lk_url = LIVEKIT_URL.replace("wss://", "https://").replace("ws://", "http://")
+            lk = livekit_api.LiveKitAPI(
+                url=lk_url,
+                api_key=LIVEKIT_API_KEY,
+                api_secret=LIVEKIT_API_SECRET
             )
 
-            await room_service.create_room(
+            await lk.room.create_room(
                 livekit_api.CreateRoomRequest(
                     name=room_name,
                     empty_timeout=300,
                     max_participants=10,
                     metadata=json.dumps({
                         "type": "sip-bridge",
+                        "agentId": call_info.agent_config_id,  # For worker TTS/LLM config
                         "device_id": call_info.device_id,
                         "call_id": call_info.call_id,
                         "remote_uri": call_info.remote_uri
@@ -1165,19 +2130,18 @@ class SipBridgeManager:
 
             # Dispatch agent to the room
             try:
-                dispatch = livekit_api.AgentDispatchClient(
-                    LIVEKIT_URL.replace("wss://", "https://").replace("ws://", "http://"),
-                    LIVEKIT_API_KEY,
-                    LIVEKIT_API_SECRET
-                )
-                await dispatch.create_dispatch(
-                    room_name,
-                    "nexus",  # Agent name
-                    metadata=json.dumps({"source": "sip-bridge", "call_id": call_info.call_id})
+                await lk.agent_dispatch.create_dispatch(
+                    livekit_api.CreateAgentDispatchRequest(
+                        room=room_name,
+                        agent_name="nexus",
+                        metadata=json.dumps({"source": "sip-bridge", "call_id": call_info.call_id})
+                    )
                 )
                 logger.info("agent_dispatched", room=room_name)
             except Exception as e:
                 logger.warning("agent_dispatch_failed", room=room_name, error=str(e))
+            finally:
+                await lk.aclose()
 
         except Exception as e:
             logger.error("livekit_room_creation_failed", room=room_name, error=str(e))
@@ -1281,9 +2245,16 @@ manager = SipBridgeManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
+    global guardian
+
     # Startup
     await manager.initialize()
     await manager.load_devices_from_db()
+
+    # Initialize Guardian with the manager's Redis connection
+    guardian = GuardianBridge(manager.redis)
+    await guardian.start_takeover_listener()
+    logger.info("guardian_bridge_initialized")
 
     # Start Redis listener in background
     asyncio.create_task(manager.listen_redis_events())
@@ -1291,6 +2262,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    if guardian:
+        await guardian.stop_takeover_listener()
     await manager.shutdown()
 
 

@@ -28,15 +28,15 @@ export async function PATCH(
     const body = await request.json();
     const { role } = body;
 
-    if (!role || !["USER", "ADMIN"].includes(role)) {
+    if (!role || !["USER", "AGENT", "ADMIN"].includes(role)) {
       return NextResponse.json(
-        { error: "Invalid role. Must be USER or ADMIN" },
+        { error: "Invalid role. Must be USER, AGENT, or ADMIN" },
         { status: 400 }
       );
     }
 
-    // Prevent demoting yourself
-    if (userId === session.user.id && role === "USER") {
+    // Prevent demoting yourself from admin
+    if (userId === session.user.id && role !== "ADMIN") {
       return NextResponse.json(
         { error: "You cannot demote yourself" },
         { status: 400 }

@@ -3,10 +3,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@voxnexus/db";
 import { randomBytes, createHash } from "crypto";
+import { auth } from "@/auth";
 
 export async function GET() {
   try {
+    // Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
+    // Only fetch API keys belonging to user's organization
     const apiKeys = await prisma.apiKey.findMany({
+      where: { organizationId: orgUser.organizationId },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
@@ -31,36 +50,29 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    // Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization and role
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true, role: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
+    // Only ADMIN users can create API keys
+    if (orgUser.role !== "ADMIN") {
+      return NextResponse.json({ error: "Only admins can create API keys" }, { status: 403 });
+    }
+
     const body = await request.json();
     const name = body.name || "New API Key";
-
-    // Get the first organization (for demo purposes)
-    let org = await prisma.organization.findFirst();
-
-    if (!org) {
-      const now = new Date();
-      const periodEnd = new Date(now);
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-
-      org = await prisma.organization.create({
-        data: {
-          name: "Cothink LLC",
-          slug: "cothink",
-          subscription: {
-            create: {
-              plan: "PRO",
-              status: "ACTIVE",
-              agentLimit: 5,
-              minuteLimit: 2000,
-              sipDeviceLimit: 5,
-              subAccountLimit: 0,
-              currentPeriodStart: now,
-              currentPeriodEnd: periodEnd,
-            },
-          },
-        },
-      });
-    }
 
     // Generate a secure API key
     const apiKeyRaw = `vxn_${randomBytes(24).toString("hex")}`;
@@ -69,7 +81,7 @@ export async function POST(request: NextRequest) {
 
     const apiKey = await prisma.apiKey.create({
       data: {
-        organizationId: org.id,
+        organizationId: orgUser.organizationId,
         name,
         keyHash,
         keyPrefix,

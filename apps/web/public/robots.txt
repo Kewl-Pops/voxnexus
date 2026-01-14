@@ -1,0 +1,43 @@
+# VoxNexus - Voice AI Platform
+# https://voxnexus.pro
+
+User-agent: *
+Allow: /
+Crawl-delay: 1
+
+# Block private/admin pages
+Disallow: /admin/
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /settings/
+Disallow: /login
+Disallow: /register
+Disallow: /guardian/
+
+# Sitemaps
+Sitemap: https://voxnexus.pro/sitemap.xml
+
+# Search Engines
+User-agent: Googlebot
+Allow: /
+Crawl-delay: 0
+
+User-agent: Bingbot
+Allow: /
+Crawl-delay: 1
+
+# AI Crawlers
+User-agent: GPTBot
+Disallow: /admin/
+Disallow: /dashboard/
+Allow: /
+
+User-agent: ClaudeBot
+Disallow: /admin/
+Disallow: /dashboard/
+Allow: /
+
+User-agent: PerplexityBot
+Disallow: /admin/
+Disallow: /dashboard/
+Allow: /

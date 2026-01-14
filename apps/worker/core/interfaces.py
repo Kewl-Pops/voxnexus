@@ -857,7 +857,10 @@ class GuardianConfig:
         enable_sentiment: Enable real-time sentiment analysis
         enable_risk_detection: Enable risk keyword detection
         enable_takeover: Enable human takeover capability
-        custom_keywords: Additional risk keywords to detect
+        custom_keywords: Additional risk keywords to detect (deprecated, use categorized keywords)
+        critical_keywords: Keywords that trigger CRITICAL alerts
+        high_risk_keywords: Keywords that trigger HIGH alerts
+        medium_risk_keywords: Keywords that trigger MEDIUM alerts
     """
     api_key: Optional[str] = None
     auto_handoff_threshold: float = 0.8
@@ -866,6 +869,10 @@ class GuardianConfig:
     enable_risk_detection: bool = True
     enable_takeover: bool = True
     custom_keywords: list[str] = field(default_factory=list)
+    # Categorized keywords from GuardianConfig table
+    critical_keywords: list[str] = field(default_factory=list)
+    high_risk_keywords: list[str] = field(default_factory=list)
+    medium_risk_keywords: list[str] = field(default_factory=list)
 
 
 class BaseGuardian(ABC):

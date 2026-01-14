@@ -124,6 +124,45 @@ services:
           memory: 2G
 
   # ---------------------------------------------------------------------------
+  # Voice Cloning Node (Zero-Shot Voice Cloning)
+  # ---------------------------------------------------------------------------
+  # This service provides CPU-optimized zero-shot voice cloning using OpenVoice V2 (ONNX).
+  # Requires a VoxNexus Enterprise License Key.
+  # ---------------------------------------------------------------------------
+  cloning-node:
+    build:
+      context: ./apps/cloning-node
+      dockerfile: Dockerfile
+    container_name: voxnexus-cloning
+    restart: unless-stopped
+    environment:
+      PORT: 8000
+      HOST: 0.0.0.0
+      VOXNEXUS_LICENSE_KEY: ${VOXNEXUS_LICENSE_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CHECKPOINT_DIR: /app/checkpoints
+      TORCH_NUM_THREADS: ${TORCH_NUM_THREADS:-8}
+    ports:
+      - "8002:8000"
+    volumes:
+      - ./apps/cloning-node/checkpoints:/app/checkpoints:ro
+      - cloning_cache:/app/cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; response = httpx.get('http://localhost:8000/health', timeout=5); exit(0) if response.status_code == 200 else exit(1)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+    networks:
+      - voxnexus-network
+    deploy:
+      resources:
+        limits:
+          memory: 24G  # Reserve for ONNX models
+        reservations:
+          memory: 16G
+
+  # ---------------------------------------------------------------------------
   # SIP Bridge Service (Legacy PBX Integration)
   # ---------------------------------------------------------------------------
   # This service compiles PJSIP from source and provides SIP registration
@@ -187,3 +226,7 @@ volumes:
     name: voxnexus-tts-models
   tts_cache:
     name: voxnexus-tts-cache
+  cloning_models:
+    name: voxnexus-cloning-models
+  cloning_cache:
+    name: voxnexus-cloning-cache

@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@voxnexus/db";
+import { auth } from "@/auth";
 
 // GET /api/agents/[id]/sip-devices/[deviceId] - Get a single SIP device
 export async function GET(
@@ -9,7 +10,36 @@ export async function GET(
   { params }: { params: Promise<{ id: string; deviceId: string }> }
 ) {
   try {
+    // CRITICAL: Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization for tenant isolation
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
     const { id, deviceId } = await params;
+
+    // Verify agent belongs to user's organization (tenant isolation)
+    const agent = await prisma.agentConfig.findFirst({
+      where: {
+        id,
+        organizationId: orgUser.organizationId,
+      },
+      select: { id: true },
+    });
+
+    if (!agent) {
+      return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+    }
 
     const result = await prisma.$queryRaw<Array<{
       id: string;
@@ -72,7 +102,41 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string; deviceId: string }> }
 ) {
   try {
+    // CRITICAL: Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization and role
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true, role: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
+    // Only ADMIN users can delete SIP devices
+    if (orgUser.role !== "ADMIN") {
+      return NextResponse.json({ error: "Only admins can delete SIP devices" }, { status: 403 });
+    }
+
     const { id, deviceId } = await params;
+
+    // Verify agent belongs to user's organization (tenant isolation)
+    const agent = await prisma.agentConfig.findFirst({
+      where: {
+        id,
+        organizationId: orgUser.organizationId,
+      },
+      select: { id: true },
+    });
+
+    if (!agent) {
+      return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+    }
 
     // Verify the device exists and belongs to this agent
     const existing = await prisma.$queryRaw<Array<{ id: string }>>`
@@ -115,7 +179,41 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string; deviceId: string }> }
 ) {
   try {
+    // CRITICAL: Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization and role
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true, role: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
+    // Only ADMIN users can modify SIP devices
+    if (orgUser.role !== "ADMIN") {
+      return NextResponse.json({ error: "Only admins can modify SIP devices" }, { status: 403 });
+    }
+
     const { id, deviceId } = await params;
+
+    // Verify agent belongs to user's organization (tenant isolation)
+    const agent = await prisma.agentConfig.findFirst({
+      where: {
+        id,
+        organizationId: orgUser.organizationId,
+      },
+      select: { id: true },
+    });
+
+    if (!agent) {
+      return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+    }
 
     // Verify the device exists and belongs to this agent
     const existing = await prisma.$queryRaw<Array<{ id: string; status: string; last_error: string | null; display_name: string | null; greeting_text: string | null }>>`

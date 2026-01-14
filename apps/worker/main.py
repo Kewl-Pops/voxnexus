@@ -71,6 +71,31 @@ logger = logging.getLogger("voxnexus.worker")
 
 
 # =============================================================================
+# Database Connection Pool
+# =============================================================================
+
+_db_pool = None
+
+
+def get_clean_database_url() -> str:
+    """Get DATABASE_URL with Prisma-specific parameters stripped."""
+    url = os.getenv("DATABASE_URL", "")
+    # Remove ?schema=public which Prisma adds but asyncpg doesn't understand
+    if "?schema=" in url:
+        url = url.split("?schema=")[0]
+    return url
+
+
+async def get_db_pool():
+    """Get or create the database connection pool."""
+    global _db_pool
+    if _db_pool is None:
+        import asyncpg
+        _db_pool = await asyncpg.create_pool(get_clean_database_url(), min_size=1, max_size=5)
+    return _db_pool
+
+
+# =============================================================================
 # Guardian Security Suite (Proprietary Plugin - Optional)
 # =============================================================================
 
@@ -164,6 +189,82 @@ def load_guardian_plugin() -> BaseGuardian | None:
 def get_guardian() -> BaseGuardian | None:
     """Get the current Guardian instance."""
     return _guardian_plugin
+
+
+async def load_guardian_config_from_db(agent_config_id: str) -> None:
+    """
+    Load Guardian configuration from the database and update the Guardian instance.
+
+    This fetches custom keywords and thresholds from the GuardianConfig table
+    and applies them to the running Guardian instance.
+
+    Args:
+        agent_config_id: The UUID of the agent config to load settings for
+    """
+    guardian = get_guardian()
+    if guardian is None:
+        return
+
+    try:
+        import asyncpg
+
+        database_url = os.environ.get("DATABASE_URL", "")
+        if not database_url:
+            logger.warning("[Guardian] No DATABASE_URL configured, using default keywords")
+            return
+
+        conn = await asyncpg.connect(database_url)
+        try:
+            # Query the guardian_configs table
+            row = await conn.fetchrow(
+                """
+                SELECT critical_keywords, high_risk_keywords, medium_risk_keywords,
+                       auto_handoff_threshold, enabled
+                FROM guardian_configs
+                WHERE agent_config_id = $1
+                """,
+                agent_config_id
+            )
+
+            if row and row["enabled"]:
+                # Update Guardian with DB keywords
+                guardian.update_keywords(
+                    critical=row["critical_keywords"] if row["critical_keywords"] else None,
+                    high=row["high_risk_keywords"] if row["high_risk_keywords"] else None,
+                    medium=row["medium_risk_keywords"] if row["medium_risk_keywords"] else None,
+                )
+
+                # Update threshold
+                if row["auto_handoff_threshold"]:
+                    guardian.update_threshold(row["auto_handoff_threshold"])
+
+                logger.info(f"[Guardian] Loaded custom config for agent {agent_config_id[:8]}...")
+            else:
+                logger.debug(f"[Guardian] No custom config found for agent, using defaults")
+
+        finally:
+            await conn.close()
+
+    except ImportError:
+        logger.warning("[Guardian] asyncpg not installed, cannot load DB config")
+    except Exception as e:
+        logger.error(f"[Guardian] Failed to load config from DB: {e}")
+        # CRITICAL: Alert admin that Guardian is using stale keywords
+        try:
+            # Push alert to Redis for dashboard notification
+            redis_client = redis.asyncio.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+            await redis_client.publish("guardian:alerts", json.dumps({
+                "type": "config_load_failed",
+                "agent_config_id": agent_config_id,
+                "error": str(e),
+                "timestamp": time.time()
+            }))
+            await redis_client.close()
+        except Exception as alert_error:
+            logger.error(f"[Guardian] Failed to push config error alert: {alert_error}")
+        
+        # Also log to stderr for monitoring systems
+        print(f"🚨 GUARDIAN CONFIG LOAD FAILED: {e}", file=sys.stderr)
 
 
 # =============================================================================
@@ -948,6 +1049,357 @@ class KokoroLocalTTS(BaseTTS):
                 logger.error(f"Kokoro TTS final chunk failed: {e}")
 
 
+@register_plugin("tts", "voxclone")
+class VoxCloneTTS(BaseTTS):
+    """
+    VoxNexus Voice Cloning TTS implementation.
+    
+    This plugin calls the external voice cloning microservice to perform
+    zero-shot voice cloning using reference audio.
+    """
+    
+    def __init__(self, config: TTSConfig):
+        """
+        Initialize VoxClone TTS plugin.
+        
+        Args:
+            config: TTS configuration including voice_id as reference audio
+        """
+        super().__init__(config)
+        
+        # API endpoint for cloning microservice
+        self.api_url = os.getenv("VOXCLONE_API_URL", "http://localhost:8000")
+        self.license_key = os.getenv("VOXNEXUS_LICENSE_KEY", "")
+        
+        # Reference audio for cloning (voice_id contains path or base64)
+        self.reference_audio = self._load_reference_audio()
+        
+        # HTTP client for API calls
+        self._client: Optional[httpx.AsyncClient] = None
+        
+        logger.info(
+            f"VoxCloneTTS initialized: api_url={self.api_url}, "
+            f"voice_id={config.voice_id[:50]}..., "
+            f"license_configured={'yes' if self.license_key else 'no'}"
+        )
+    
+    @property
+    def provider_name(self) -> str:
+        """Return provider name."""
+        return "voxclone"
+    
+    def _load_reference_audio(self) -> bytes:
+        """
+        Load reference audio for voice cloning.
+
+        The voice_id can be:
+        - VoiceProfile database ID (looked up to get file path)
+        - Path to audio file (will be loaded)
+        - Base64-encoded audio (starts with data:audio/)
+        - File path relative to a configured directory
+        """
+        try:
+            if not self.config.voice_id:
+                raise ValueError("voice_id is required for VoxClone - must be reference audio")
+
+            # Check if voice_id is base64-encoded audio
+            if self.config.voice_id.startswith("data:audio/"):
+                # Extract base64 part (after comma)
+                base64_part = self.config.voice_id.split(",")[1]
+                return base64.b64decode(base64_part)
+
+            # Check if voice_id is a file path that exists
+            elif os.path.exists(self.config.voice_id):
+                with open(self.config.voice_id, "rb") as f:
+                    return f.read()
+
+            # Check if voice_id looks like a database ID (not a path)
+            # Database IDs are alphanumeric without path separators
+            elif "/" not in self.config.voice_id and "\\" not in self.config.voice_id:
+                # Look up voice profile from database
+                audio_path = self._lookup_voice_profile(self.config.voice_id)
+                if audio_path and os.path.exists(audio_path):
+                    logger.info(f"Loaded voice profile audio from: {audio_path}")
+                    with open(audio_path, "rb") as f:
+                        return f.read()
+                else:
+                    raise FileNotFoundError(
+                        f"Voice profile {self.config.voice_id} audio not found at {audio_path}"
+                    )
+
+            # Try relative path from VOXCLONE_AUDIO_DIR
+            else:
+                audio_dir = os.getenv("VOXCLONE_AUDIO_DIR", "/app/audio/cloning")
+                audio_path = os.path.join(audio_dir, self.config.voice_id)
+
+                if os.path.exists(audio_path):
+                    with open(audio_path, "rb") as f:
+                        return f.read()
+                else:
+                    raise FileNotFoundError(
+                        f"Reference audio not found at {self.config.voice_id} "
+                        f"or {audio_path}"
+                    )
+
+        except Exception as e:
+            logger.error(f"Failed to load reference audio: {e}")
+            # Return empty bytes - will fail on first synthesis attempt
+            return b""
+
+    def _lookup_voice_profile(self, profile_id: str) -> Optional[str]:
+        """
+        Look up voice profile from database to get audio file path.
+
+        Args:
+            profile_id: VoiceProfile database ID
+
+        Returns:
+            Full path to the audio file, or None if not found
+        """
+        import psycopg2
+
+        try:
+            database_url = get_clean_database_url()
+            if not database_url:
+                logger.error("DATABASE_URL not configured for voice profile lookup")
+                return None
+
+            # Connect to database
+            conn = psycopg2.connect(database_url)
+            cursor = conn.cursor()
+
+            # Query voice profile
+            cursor.execute(
+                "SELECT reference_audio_url FROM voice_profiles WHERE id = %s",
+                (profile_id,)
+            )
+
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+
+            if not row:
+                logger.warning(f"Voice profile not found: {profile_id}")
+                return None
+
+            reference_audio_url = row[0]  # e.g., "/uploads/voices/voice_xxx.wav"
+
+            # Construct full path from web app's public directory
+            web_public_dir = os.getenv(
+                "VOXNEXUS_WEB_PUBLIC_DIR",
+                "/var/www/voxnexus/apps/web/public"
+            )
+
+            full_path = os.path.join(web_public_dir, reference_audio_url.lstrip("/"))
+            logger.debug(f"Voice profile {profile_id} -> {full_path}")
+
+            return full_path
+
+        except Exception as e:
+            logger.error(f"Failed to lookup voice profile {profile_id}: {e}")
+            return None
+    
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create HTTP client."""
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                base_url=self.api_url,
+                timeout=30.0,
+                limits=httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=5,
+                    keepalive_expiry=30.0
+                )
+            )
+        return self._client
+    
+    async def synthesize(
+        self,
+        text: str,
+        **kwargs: Any,
+    ) -> SynthesisResult:
+        """
+        Synthesize speech using voice cloning.
+        
+        Args:
+            text: Text to synthesize
+            **kwargs: Additional arguments (e.g., reference_audio_override)
+            
+        Returns:
+            SynthesisResult with cloned audio
+        """
+        if not self.reference_audio:
+            raise RuntimeError("No reference audio loaded - cannot clone voice")
+        
+        try:
+            logger.debug(f"Synthesizing with VoxClone: {text[:50]}...")
+            
+            # Use override reference audio if provided (for per-request cloning)
+            reference_audio = kwargs.get("reference_audio", self.reference_audio)
+            
+            if not reference_audio:
+                raise ValueError("Reference audio required for voice cloning")
+            
+            # Prepare request
+            request_data = {
+                "text": text,
+                "reference_audio_base64": base64.b64encode(reference_audio).decode('utf-8'),
+                "speed": kwargs.get("speed", self.config.speed),
+                "sample_rate": self.config.sample_rate,
+            }
+            
+            # Get HTTP client
+            client = await self._get_client()
+            
+            # Call cloning API
+            response = await client.post(
+                "/v1/clone",
+                json=request_data,
+                headers={
+                    "X-VoxNexus-License": self.license_key,
+                    "User-Agent": "VoxNexus-Worker/1.0",
+                }
+            )
+            
+            # Handle errors
+            if response.status_code == 403:
+                error_detail = response.json().get("detail", {})
+                raise RuntimeError(
+                    f"License verification failed: {error_detail.get('error', 'Unknown')}. "
+                    f"{error_detail.get('help', 'Check VOXNEXUS_LICENSE_KEY')}"
+                )
+            elif response.status_code != 200:
+                raise RuntimeError(
+                    f"Voice cloning failed: HTTP {response.status_code} - "
+                    f"{response.text}"
+                )
+            
+            # Parse response
+            result = response.json()
+            
+            # Decode audio
+            audio_data = base64.b64decode(result["audio_base64"])
+            
+            logger.info(
+                f"✓ Voice cloning completed: "
+                f"text_length={len(text)}, "
+                f"latency={result['latency_ms']:.2f}ms, "
+                f"audio_duration={result['duration_ms']:.2f}ms"
+            )
+            
+            return SynthesisResult(
+                audio=audio_data,
+                sample_rate=result.get("sample_rate", self.config.sample_rate),
+                duration_ms=result["duration_ms"],
+                format="pcm",  # WAV PCM format
+            )
+            
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error in VoxClone API call: {e}")
+            raise RuntimeError(f"Voice cloning service unavailable: {e}")
+        except Exception as e:
+            logger.error(f"Failed to synthesize with VoxClone: {e}", exc_info=True)
+            raise
+    
+    async def stream_synthesize(
+        self,
+        text_stream: AsyncIterator[str],
+        **kwargs: Any,
+    ) -> AsyncIterator[AudioFrame]:
+        """
+        Stream synthesis for real-time voice cloning.
+        
+        Since OpenVoice is fast but not true streaming, we accumulate text
+        into sentences and yield audio chunks as they're generated.
+        
+        Args:
+            text_stream: Async iterator of text chunks
+            **kwargs: Additional arguments
+            
+        Yields:
+            AudioFrame objects as audio is generated
+        """
+        if not self.reference_audio:
+            raise RuntimeError("No reference audio loaded - cannot clone voice")
+        
+        sentence_buffer = ""
+        sentence_endings = ".!?\n"
+        
+        try:
+            async for text_chunk in text_stream:
+                sentence_buffer += text_chunk
+                
+                # Check for complete sentences
+                for i, char in enumerate(sentence_buffer):
+                    if char in sentence_endings:
+                        sentence = sentence_buffer[:i + 1].strip()
+                        sentence_buffer = sentence_buffer[i + 1:]
+                        
+                        if sentence:
+                            # Synthesize this sentence
+                            logger.debug(f"Synthesizing sentence: {sentence}")
+                            result = await self.synthesize(sentence, **kwargs)
+                            
+                            # Yield as audio frame
+                            yield AudioFrame(
+                                data=result.audio,
+                                sample_rate=result.sample_rate,
+                                channels=1,
+                                timestamp_ms=0.0  # Could calculate actual timestamp
+                            )
+            
+            # Handle remaining buffer
+            if sentence_buffer.strip():
+                result = await self.synthesize(sentence_buffer.strip(), **kwargs)
+                yield AudioFrame(
+                    data=result.audio,
+                    sample_rate=result.sample_rate,
+                    channels=1,
+                    timestamp_ms=0.0
+                )
+        
+        except Exception as e:
+            logger.error(f"Stream synthesis failed: {e}", exc_info=True)
+            raise
+    
+    async def health_check(self) -> bool:
+        """Check if the cloning service is healthy and accessible."""
+        try:
+            if not self.reference_audio:
+                logger.warning("Health check: No reference audio configured")
+                return False
+            
+            if not self.license_key:
+                logger.warning("Health check: No license key configured")
+                return False
+            
+            client = await self._get_client()
+            response = await client.get("/health", timeout=5.0)
+            
+            if response.status_code != 200:
+                logger.warning(f"Health check failed: HTTP {response.status_code}")
+                return False
+            
+            health = response.json()
+            if not health.get("models_loaded", False):
+                logger.warning("Health check: Voice models not loaded")
+                return False
+            
+            logger.debug("Health check passed")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Health check failed: {e}")
+            return False
+    
+    async def close(self) -> None:
+        """Clean up resources."""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+        logger.debug("VoxCloneTTS resources cleaned up")
+
+
 # =============================================================================
 # Agent Factory
 # =============================================================================
@@ -1248,8 +1700,8 @@ async def query_knowledge_base(
     # Generate embedding for the query
     query_embedding = await generate_query_embedding(query)
 
-    # Connect to database
-    conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
+    # Connect to database (use clean URL without Prisma schema parameter)
+    conn = await asyncpg.connect(get_clean_database_url())
 
     try:
         # Perform vector similarity search using pgvector
@@ -1356,7 +1808,7 @@ async def fetch_agent_webhooks(agent_id: str) -> list[dict]:
     except ImportError:
         raise ImportError("asyncpg not installed. Run: pip install asyncpg")
 
-    conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
+    conn = await asyncpg.connect(get_clean_database_url())
 
     try:
         results = await conn.fetch(
@@ -1610,6 +2062,7 @@ from livekit.agents import AutoSubscribe, JobContext
 from livekit.agents.worker import AgentServer
 from livekit.agents.voice import Agent, AgentSession
 from livekit.plugins import openai, silero
+import livekit.rtc
 
 # Default system prompt for the agent
 DEFAULT_SYSTEM_PROMPT = os.getenv(
@@ -1717,7 +2170,7 @@ async def check_agent_has_knowledge(agent_id: str) -> bool:
     """Check if an agent has any knowledge documents."""
     try:
         import asyncpg
-        conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
+        conn = await asyncpg.connect(get_clean_database_url())
         try:
             result = await conn.fetchval(
                 """
@@ -1753,13 +2206,209 @@ def _get_livekit_server() -> AgentServer:
     return _livekit_server
 
 
+async def create_tts_from_config(tts_config: Optional[dict]) -> Any:
+    """
+    Create a TTS instance based on the agent's TTS configuration.
+
+    Args:
+        tts_config: TTS config from database (provider, model, voice_id, etc.)
+
+    Returns:
+        TTS instance for the agent
+    """
+    if not tts_config:
+        # Default to OpenAI TTS
+        logger.info("No TTS config provided, using default OpenAI TTS")
+        return openai.TTS(voice="alloy")
+
+    provider = tts_config.get("provider", "openai")
+    voice_id = tts_config.get("voice_id")
+    model = tts_config.get("model")
+
+    logger.info(f"Creating TTS: provider={provider}, model={model}, voice_id={voice_id}")
+
+    if provider == "openai":
+        voice = voice_id or "alloy"
+        return openai.TTS(voice=voice, model=model or "tts-1")
+
+    elif provider == "cartesia":
+        from livekit.plugins import cartesia
+        return cartesia.TTS(voice=voice_id or "sonic-english")
+
+    elif provider == "elevenlabs":
+        from livekit.plugins import elevenlabs
+        return elevenlabs.TTS(voice=voice_id or "Rachel", model=model or "eleven_turbo_v2_5")
+
+    elif provider == "voxclone":
+        # Use our custom VoxClone TTS for voice cloning
+        logger.info(f"Initializing VoxClone TTS with voice_id={voice_id}")
+        try:
+            config = TTSConfig(
+                provider="voxclone",
+                model=model or "openvoice-v2",
+                voice_id=voice_id or "",
+                sample_rate=24000,
+            )
+            voxclone_tts = VoxCloneTTS(config)
+
+            # VoxClone needs a wrapper to work with LiveKit's TTS interface
+            # For now, fall back to OpenAI if reference audio isn't loaded
+            if not voxclone_tts.reference_audio:
+                logger.warning("VoxClone reference audio not loaded, falling back to OpenAI TTS")
+                return openai.TTS(voice="alloy")
+
+            # Return a wrapper that adapts VoxCloneTTS to LiveKit's interface
+            return VoxCloneLiveKitAdapter(voxclone_tts)
+
+        except Exception as e:
+            logger.error(f"Failed to initialize VoxClone TTS: {e}")
+            return openai.TTS(voice="alloy")
+
+    elif provider == "kokoro":
+        # Kokoro local TTS
+        try:
+            config = TTSConfig(
+                provider="kokoro",
+                model=model or "kokoro-82m",
+                voice_id=voice_id or "af_bella",
+                sample_rate=24000,
+            )
+            return KokoroTTS(config)
+        except Exception as e:
+            logger.error(f"Failed to initialize Kokoro TTS: {e}")
+            return openai.TTS(voice="alloy")
+
+    else:
+        logger.warning(f"Unknown TTS provider '{provider}', using OpenAI")
+        return openai.TTS(voice="alloy")
+
+
+class VoxCloneLiveKitAdapter:
+    """
+    Adapter to make VoxCloneTTS work with LiveKit's TTS interface.
+
+    LiveKit expects a TTS object with specific methods. This adapter
+    wraps our VoxCloneTTS to provide the expected interface.
+    """
+
+    def __init__(self, voxclone_tts: "VoxCloneTTS"):
+        self._tts = voxclone_tts
+        self._client = None
+        # Import TTSCapabilities from livekit
+        from livekit.agents.tts import TTSCapabilities
+        self._capabilities = TTSCapabilities(streaming=False)
+        self._sample_rate = 24000
+        self._num_channels = 1
+
+    @property
+    def capabilities(self):
+        """Return TTS capabilities."""
+        return self._capabilities
+
+    @property
+    def sample_rate(self) -> int:
+        """Return sample rate."""
+        return self._sample_rate
+
+    @property
+    def num_channels(self) -> int:
+        """Return number of channels."""
+        return self._num_channels
+
+    async def synthesize(self, text: str) -> Any:
+        """Synthesize speech from text."""
+        result = await self._tts.synthesize(text)
+        return result
+
+    def stream(self):
+        """Return a streaming TTS session."""
+        return VoxCloneStreamAdapter(self._tts)
+
+
+class VoxCloneStreamAdapter:
+    """Adapter for streaming TTS with VoxClone."""
+
+    def __init__(self, voxclone_tts: "VoxCloneTTS"):
+        self._tts = voxclone_tts
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+    def push_text(self, text: str):
+        """Buffer text for synthesis."""
+        self._text_buffer = getattr(self, "_text_buffer", "") + text
+
+    async def flush(self):
+        """Synthesize buffered text."""
+        text = getattr(self, "_text_buffer", "")
+        if text:
+            result = await self._tts.synthesize(text)
+            self._text_buffer = ""
+            return result
+
+    async def aclose(self):
+        """Close the stream."""
+        pass
+
+
 async def agent_entrypoint(ctx: JobContext):
     """Entry point for each LiveKit room session."""
     global _current_room
+    import os
 
-    logger.info(f"Agent joining room: {ctx.room.name}")
+    # Use the LiveKit job ID which is guaranteed unique per dispatch
+    job_id = ctx.job.id if ctx.job else "unknown"
+    logger.info(f"Agent dispatched for room: {ctx.room.name}, job_id: {job_id}")
 
-    # Wait for a participant to connect
+    # Generate agent ID using job ID + task ID for uniqueness
+    task_id = id(asyncio.current_task())
+    agent_instance_id = f"agent-{job_id}-{task_id}"
+    logger.info(f"Agent instance ID: {agent_instance_id}")
+
+    # =========================================================================
+    # CLAIM ROOM BEFORE CONNECTING - Critical for preventing duplicates
+    # =========================================================================
+    claim_api_url = os.getenv("GUARDIAN_API_URL", "http://localhost:3000/api/guardian/events")
+    # Extract base URL from guardian events URL
+    base_url = claim_api_url.rsplit("/api/", 1)[0]
+    claim_url = f"{base_url}/api/worker/claim-room"
+    api_key = os.getenv("GUARDIAN_KEY", "")
+
+    claimed = False
+    if api_key:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(
+                    claim_url,
+                    json={"roomName": ctx.room.name, "agentId": agent_instance_id},
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    if result.get("claimed"):
+                        logger.info(f"Successfully claimed room {ctx.room.name}")
+                        claimed = True
+                    else:
+                        existing = result.get("existingAgentId", "unknown")
+                        logger.warning(f"Room {ctx.room.name} already claimed by {existing}, NOT CONNECTING")
+                        return  # Exit BEFORE connecting
+                else:
+                    logger.warning(f"Claim API returned {response.status_code}, proceeding anyway")
+                    claimed = True  # Assume success if API error, let it connect
+        except Exception as e:
+            logger.warning(f"Failed to call claim API: {e}, proceeding anyway")
+            claimed = True  # Assume success if can't reach API
+
+    if not claimed:
+        logger.warning(f"Could not claim room {ctx.room.name}, NOT CONNECTING")
+        return
+
+    # NOW connect after successful claim
+    logger.info(f"Connecting to room: {ctx.room.name}")
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
 
     # Store room reference for Visual Voice
@@ -1768,9 +2417,12 @@ async def agent_entrypoint(ctx: JobContext):
     # =========================================================================
     # Guardian Security Suite Integration
     # =========================================================================
-    guardian = get_guardian()
+    # Load Guardian in subprocess (it won't be available from main process)
+    guardian = load_guardian_plugin()
     guardian_active = False
     human_takeover_active = False
+    agent_session: AgentSession | None = None  # Store session reference for takeover
+    agent_instance: Agent | None = None  # Store agent reference for session recreation
 
     if guardian:
         try:
@@ -1782,22 +2434,80 @@ async def agent_entrypoint(ctx: JobContext):
             guardian = None
 
     # Set up data channel handler for Guardian commands (takeover, etc.)
-    @ctx.room.on("data_received")
-    async def on_data_received(data: bytes, participant, topic: str | None):
-        nonlocal human_takeover_active
+    from livekit.rtc import DataPacket
 
-        if topic != "guardian_command":
+    # Track processed commands to prevent duplicates
+    _processed_commands: set[str] = set()
+
+    async def _handle_guardian_command(data_packet: DataPacket):
+        nonlocal human_takeover_active, agent_session, agent_instance
+
+        logger.debug(f"[Guardian] Data received - topic: {data_packet.topic}")
+
+        if data_packet.topic != "guardian_command":
             return
 
         try:
             import json
-            command = json.loads(data.decode("utf-8"))
+            command = json.loads(data_packet.data.decode("utf-8"))
             cmd_type = command.get("type")
 
-            if cmd_type == "takeover" and guardian:
+            # Create unique command ID for deduplication
+            cmd_timestamp = command.get("timestamp", "")
+            cmd_id = f"{cmd_type}:{cmd_timestamp}"
+
+            if cmd_id in _processed_commands:
+                logger.debug(f"[Guardian] Skipping duplicate command: {cmd_id}")
+                return
+            _processed_commands.add(cmd_id)
+
+            logger.info(f"[Guardian] Processing command: {cmd_type} (id={cmd_id})")
+
+            if cmd_type == "takeover":
                 logger.info(f"🔐 Human takeover initiated by {command.get('agent_name', 'unknown')}")
+                logger.info(f"[Guardian] agent_session exists: {agent_session is not None}, type: {type(agent_session)}")
                 human_takeover_active = True
-                await guardian.on_human_takeover(command)
+
+                if agent_session:
+                    # Interrupt any ongoing speech first
+                    logger.info("[Guardian] Interrupting agent session...")
+                    await agent_session.interrupt()
+
+                    # Announce takeover to the caller BEFORE shutting down
+                    logger.info("[Guardian] Announcing takeover to caller...")
+                    try:
+                        await agent_session.say("Please hold, I'm connecting you to a human agent.")
+                        # Brief pause to let the announcement complete
+                        await asyncio.sleep(2.0)
+                    except Exception as e:
+                        logger.warning(f"[Guardian] Announcement failed: {e}")
+
+                    # Completely shut down the agent session
+                    logger.info("[Guardian] Shutting down agent session...")
+                    agent_session.shutdown()  # Not async
+                    agent_session = None
+
+                # CRITICAL: Mute and unpublish all audio tracks to stop the agent
+                track_count = len(ctx.room.local_participant.track_publications)
+                logger.info(f"[Guardian] Muting and unpublishing {track_count} agent audio tracks...")
+                for publication in ctx.room.local_participant.track_publications.values():
+                    try:
+                        # Mute the track first (sync call, not async)
+                        if publication.track:
+                            publication.track.mute()
+                            logger.info(f"[Guardian] Muted track: {publication.sid}")
+
+                        # Then unpublish using the track SID (async call)
+                        await ctx.room.local_participant.unpublish_track(publication.sid)
+                        logger.info(f"[Guardian] Unpublished track: {publication.sid}")
+                    except Exception as e:
+                        logger.error(f"[Guardian] Failed to mute/unpublish track {publication.sid}: {e}")
+
+                logger.info("[Guardian] Agent session terminated - human takeover active")
+
+                if guardian:
+                    await guardian.on_human_takeover(command)
+
                 # Notify the room that AI is paused
                 await ctx.room.local_participant.publish_data(
                     json.dumps({
@@ -1808,10 +2518,32 @@ async def agent_entrypoint(ctx: JobContext):
                     topic="guardian_status",
                 )
 
-            elif cmd_type == "release" and guardian:
+                logger.info("[Guardian] Takeover complete - AI fully silenced")
+
+            elif cmd_type == "release":
                 logger.info("🔐 Human released control back to AI")
                 human_takeover_active = False
-                await guardian.on_human_release()
+
+                # Session was shut down during takeover - need to recreate
+                if agent_session is None and agent_instance is not None:
+                    logger.info("[Guardian] Recreating agent session after release...")
+                    from livekit.agents.voice import AgentSession
+                    agent_session = AgentSession()
+                    await agent_session.start(agent_instance, room=ctx.room)
+                    await agent_session.say("I'm back. How can I continue to help you?")
+                    logger.info("[Guardian] Agent session recreated - AI resumed")
+                elif agent_session:
+                    # Session still exists (fallback)
+                    agent_session.output.set_audio_enabled(True)
+                    agent_session.input.set_audio_enabled(True)
+                    await agent_session.say("I'm back. How can I continue to help you?")
+                    logger.info("[Guardian] Agent re-enabled - AI resumed")
+                else:
+                    logger.warning("[Guardian] Cannot restore AI - session not available. User should hang up and call back.")
+
+                if guardian:
+                    await guardian.on_human_release()
+
                 await ctx.room.local_participant.publish_data(
                     json.dumps({
                         "type": "guardian_status",
@@ -1820,14 +2552,24 @@ async def agent_entrypoint(ctx: JobContext):
                     topic="guardian_status",
                 )
 
+                logger.info("[Guardian] Release complete")
+
         except Exception as e:
             logger.error(f"Guardian command handling failed: {e}")
+
+    @ctx.room.on("data_received")
+    def on_data_received(data_packet: DataPacket):
+        logger.debug(f"[Guardian] on_data_received triggered, topic={data_packet.topic}")
+        asyncio.create_task(_handle_guardian_command(data_packet))
 
     # Get agent config from room metadata
     agent_id = None
     system_prompt = DEFAULT_SYSTEM_PROMPT
     has_knowledge_base = False
     webhooks = []
+
+    # Debug: Log room info
+    logger.info(f"Room name: {ctx.room.name}, metadata: {ctx.room.metadata}")
 
     if ctx.room.metadata:
         try:
@@ -1852,6 +2594,22 @@ async def agent_entrypoint(ctx: JobContext):
 
     # Always add Visual Voice capabilities
     system_prompt += VISUAL_VOICE_PROMPT_SUFFIX
+
+    # Fetch agent's TTS config from database if we have an agent_id
+    tts_config = None
+    if agent_id:
+        try:
+            pool = await get_db_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT tts_config FROM agent_configs WHERE id = $1",
+                    agent_id,
+                )
+                if row and row["tts_config"]:
+                    tts_config = json.loads(row["tts_config"])
+                    logger.info(f"Loaded TTS config for agent {agent_id}: {tts_config}")
+        except Exception as e:
+            logger.error(f"Failed to load TTS config for agent {agent_id}: {e}")
 
     # Initialize the Voice Agent
     # Use aiapi for LLM if configured, otherwise use OpenAI directly
@@ -1902,18 +2660,45 @@ async def agent_entrypoint(ctx: JobContext):
 
     logger.info(f"Agent initialized with {len(tools)} tool(s)")
 
+    # Create TTS instance based on agent config
+    tts_instance = await create_tts_from_config(tts_config)
+    logger.info(f"TTS provider: {tts_config.get('provider', 'openai') if tts_config else 'openai (default)'}")
+
     agent = Agent(
         instructions=system_prompt,
         vad=silero.VAD.load(),
         stt=openai.STT(),
         llm=llm_instance,
-        tts=openai.TTS(voice="alloy"),
+        tts=tts_instance,
         tools=tools,
     )
+    agent_instance = agent  # Store reference for session recreation
 
     # Create and start the agent session
     session = AgentSession()
+    agent_session = session  # Store reference for takeover
     await session.start(agent, room=ctx.room)
+
+    # =========================================================================
+    # Guardian: Hook into user transcripts for sentiment/risk analysis
+    # =========================================================================
+    if guardian_active and guardian:
+        @session.on("user_input_transcribed")
+        def on_user_transcript(event):
+            """Analyze user speech for sentiment and risk."""
+            if event.is_final and event.transcript.strip():
+                asyncio.create_task(_analyze_user_text(event.transcript))
+
+        async def _analyze_user_text(text: str):
+            """Async wrapper for Guardian text analysis."""
+            try:
+                if guardian and guardian.is_licensed:
+                    risk_result = await guardian.analyze_text(text, speaker="user")
+                    logger.debug(f"[Guardian] Analyzed user text: sentiment={risk_result.sentiment:.2f}, risk={risk_result.level.value}")
+            except Exception as e:
+                logger.error(f"[Guardian] Failed to analyze text: {e}")
+
+        logger.info("[Guardian] Transcript analysis hook registered")
 
     # Publish Guardian status to frontend
     if guardian_active:
@@ -1950,8 +2735,23 @@ async def agent_entrypoint(ctx: JobContext):
     # =========================================================================
     # Guardian Cleanup on Room Leave
     # =========================================================================
-    @ctx.room.on("disconnected")
-    async def on_disconnected():
+    async def _handle_disconnected():
+        logger.info(f"🧹 Running disconnect cleanup for room: {ctx.room.name}")
+        # Release room claim
+        if claimed and api_key:
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    await client.request(
+                        "DELETE",
+                        claim_url,
+                        json={"roomName": ctx.room.name, "agentId": agent_instance_id},
+                        headers={"Authorization": f"Bearer {api_key}"},
+                    )
+                    logger.info(f"Released room claim for {ctx.room.name}")
+            except Exception as e:
+                logger.warning(f"Failed to release room claim: {e}")
+
         if guardian:
             try:
                 analytics = await guardian.get_session_analytics()
@@ -1959,6 +2759,19 @@ async def agent_entrypoint(ctx: JobContext):
                 await guardian.on_room_leave()
             except Exception as e:
                 logger.error(f"Guardian cleanup failed: {e}")
+
+    @ctx.room.on("disconnected")
+    def on_disconnected():
+        logger.info(f"🔌 Room disconnected: {ctx.room.name} - starting cleanup")
+        # Run cleanup synchronously to ensure it completes before event loop ends
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(_handle_disconnected())
+            else:
+                loop.run_until_complete(_handle_disconnected())
+        except Exception as e:
+            logger.error(f"Disconnect cleanup scheduling failed: {e}")
 
 
 def run_livekit_worker():
@@ -1976,7 +2789,9 @@ def run_livekit_worker():
     # Run the server
     async def run_server():
         logger.info("Starting LiveKit Agent Server...")
-        await server.run(devmode=True)
+        # devmode=False means agents only join when explicitly dispatched
+        # devmode=True causes auto-join to ANY room, which creates duplicates
+        await server.run(devmode=False)
 
     asyncio.run(run_server())
 

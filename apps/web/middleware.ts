@@ -11,7 +11,8 @@ export default auth((req) => {
   const isAuthPage = nextUrl.pathname.startsWith("/login") ||
                      nextUrl.pathname.startsWith("/register") ||
                      nextUrl.pathname.startsWith("/forgot-password") ||
-                     nextUrl.pathname.startsWith("/reset-password");
+                     nextUrl.pathname.startsWith("/reset-password") ||
+                     nextUrl.pathname.startsWith("/setup-account");
   const isMarketingPage = nextUrl.pathname.startsWith("/pricing") ||
                           nextUrl.pathname.startsWith("/about") ||
                           nextUrl.pathname.startsWith("/terms") ||
@@ -28,6 +29,7 @@ export default auth((req) => {
                            nextUrl.pathname.startsWith("/branding") ||
                            nextUrl.pathname.startsWith("/sub-accounts");
   const isAdminRoute = nextUrl.pathname.startsWith("/admin");
+  const isAgentRoute = nextUrl.pathname.startsWith("/agent");
 
   // Allow API routes
   if (isApiRoute) {
@@ -57,11 +59,39 @@ export default auth((req) => {
     return NextResponse.next();
   }
 
-  // Redirect non-logged-in users to login for protected routes
-  if (isDashboardRoute && !isLoggedIn) {
-    const loginUrl = new URL("/login", nextUrl);
-    loginUrl.searchParams.set("callbackUrl", nextUrl.pathname);
-    return NextResponse.redirect(loginUrl);
+  // Agent routes: require AGENT or ADMIN role
+  if (isAgentRoute) {
+    if (!isLoggedIn) {
+      const loginUrl = new URL("/login", nextUrl);
+      loginUrl.searchParams.set("callbackUrl", nextUrl.pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+
+    // Check if user has agent or admin role
+    const user = req.auth?.user as { role?: string } | undefined;
+    if (user?.role !== "AGENT" && user?.role !== "ADMIN") {
+      // Redirect non-agents to dashboard with error
+      return NextResponse.redirect(new URL("/dashboard?error=unauthorized", nextUrl));
+    }
+
+    return NextResponse.next();
+  }
+
+  // Dashboard routes: require login and restrict AGENT users
+  if (isDashboardRoute) {
+    if (!isLoggedIn) {
+      const loginUrl = new URL("/login", nextUrl);
+      loginUrl.searchParams.set("callbackUrl", nextUrl.pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+
+    // AGENT users should only access /agent, not the main dashboard
+    const user = req.auth?.user as { role?: string } | undefined;
+    if (user?.role === "AGENT") {
+      return NextResponse.redirect(new URL("/agent", nextUrl));
+    }
+
+    return NextResponse.next();
   }
 
   return NextResponse.next();

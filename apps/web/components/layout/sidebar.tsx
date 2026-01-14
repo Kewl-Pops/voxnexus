@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { signOut } from "next-auth/react";
 import { cn } from "@/lib/utils";
-import { NAV_ITEMS, AGENCY_NAV_ITEMS, BILLING_NAV_ITEMS, ADMIN_NAV_ITEMS } from "@/lib/constants";
+import { NAV_ITEMS, AGENCY_NAV_ITEMS, BILLING_NAV_ITEMS, GUARDIAN_NAV_ITEMS, ADMIN_NAV_ITEMS } from "@/lib/constants";
 import * as Icons from "@/components/icons";
 
 interface Organization {
@@ -24,6 +24,7 @@ export function Sidebar() {
   const [org, setOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [showGuardian, setShowGuardian] = useState(false);
 
   useEffect(() => {
     async function fetchOrg() {
@@ -44,7 +45,10 @@ export function Sidebar() {
         const res = await fetch("/api/auth/session");
         if (res.ok) {
           const data = await res.json();
-          setIsAdmin(data?.user?.role === "ADMIN");
+          const role = data?.user?.role;
+          setIsAdmin(role === "ADMIN");
+          // Show Guardian for both ADMIN and AGENT roles
+          setShowGuardian(role === "ADMIN" || role === "AGENT");
         }
       } catch (e) {
         console.error("Failed to fetch session:", e);
@@ -124,6 +128,35 @@ export function Sidebar() {
               );
             })}
           </div>
+
+          {/* Guardian Nav Items - Show for ADMIN and AGENT roles */}
+          {showGuardian && (
+            <div className="pt-4">
+              <p className="px-3 text-xs font-semibold text-emerald-500 uppercase tracking-wider mb-2">
+                Guardian
+              </p>
+              {GUARDIAN_NAV_ITEMS.map((item) => {
+                const Icon = Icons[item.icon as keyof typeof Icons];
+                const isActive = pathname.startsWith(item.href);
+
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-emerald-600 text-white"
+                        : "text-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-400"
+                    )}
+                  >
+                    <Icon size={20} />
+                    {item.name}
+                  </Link>
+                );
+              })}
+            </div>
+          )}
 
           {/* Agency Nav Items - Only show for agency plan */}
           {isAgencyPlan && (

@@ -2,14 +2,35 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@voxnexus/db";
+import { auth } from "@/auth";
 
 export async function GET(request: NextRequest) {
   try {
+    // Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const status = searchParams.get("status");
 
+    // Only fetch agents belonging to user's organization
     const agents = await prisma.agentConfig.findMany({
-      where: status ? { isActive: status === "active" } : undefined,
+      where: {
+        organizationId: orgUser.organizationId,
+        ...(status ? { isActive: status === "active" } : {}),
+      },
       orderBy: { createdAt: "desc" },
     });
 
@@ -40,6 +61,27 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    // Verify authentication
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get user's organization and role
+    const orgUser = await prisma.organizationUser.findFirst({
+      where: { userId: session.user.id },
+      select: { organizationId: true, role: true },
+    });
+
+    if (!orgUser) {
+      return NextResponse.json({ error: "No organization found" }, { status: 403 });
+    }
+
+    // Only admin/owner users can create agents
+    if (orgUser.role !== "admin" && orgUser.role !== "owner") {
+      return NextResponse.json({ error: "Only admins can create agents" }, { status: 403 });
+    }
+
     const body = await request.json();
 
     if (!body.name) {
@@ -49,39 +91,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get the first organization (for demo purposes)
-    // In production, this would come from the authenticated user's session
-    let org = await prisma.organization.findFirst();
-
-    if (!org) {
-      // Create a default organization if none exists
-      const now = new Date();
-      const periodEnd = new Date(now);
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-
-      org = await prisma.organization.create({
-        data: {
-          name: "Cothink LLC",
-          slug: "cothink",
-          subscription: {
-            create: {
-              plan: "PRO",
-              status: "ACTIVE",
-              agentLimit: 5,
-              minuteLimit: 2000,
-              sipDeviceLimit: 5,
-              subAccountLimit: 0,
-              currentPeriodStart: now,
-              currentPeriodEnd: periodEnd,
-            },
-          },
-        },
-      });
-    }
-
     const agent = await prisma.agentConfig.create({
       data: {
-        organizationId: org.id,
+        organizationId: orgUser.organizationId,
         name: body.name,
         description: body.description || "",
         isActive: false,

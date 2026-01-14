@@ -3,7 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { getAnalyticsData, getBusinessMetrics } from "@/lib/analytics";
 import * as Icons from "@/components/icons";
-import { AdminCharts } from "./charts";
+import { AdminChartsLoader } from "./charts-loader";
 
 export const dynamic = "force-dynamic";
 
@@ -124,7 +124,7 @@ export default async function AdminPage() {
       </div>
 
       {/* Charts */}
-      <AdminCharts
+      <AdminChartsLoader
         dailyStats={analytics.dailyStats}
         topPages={analytics.topPages}
         topReferrers={analytics.topReferrers}
