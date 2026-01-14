@@ -109,7 +109,9 @@ test-results/
 # These modules are NOT part of the open-source release.
 # They are maintained in a separate private repository.
 apps/cloning-node/
+apps/evolve-node/
 apps/worker/plugins/guardian/
+apps/worker/plugins/coach/
 apps/worker/data/
 
 # User uploads (not for version control)

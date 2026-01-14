@@ -45,6 +45,12 @@ enum UserRole {
   ADMIN
 }
 
+enum LessonStatus {
+  SUGGESTED
+  APPROVED
+  REJECTED
+}
+
 // =============================================================================
 // Multi-Tenancy: Organizations & Users
 // =============================================================================
@@ -318,6 +324,7 @@ model AgentConfig {
   sipDevices         SipDevice[]
   guardianConfig     GuardianConfig?
   assignedUsers      AgentAssignment[]
+  lessons            AgentLesson[]
 
   @@index([organizationId])
   @@index([isActive])
@@ -771,4 +778,25 @@ model WebEvent {
   @@index([visitorHash])
   @@index([referrer])
   @@map("web_events")
+}
+
+// =============================================================================
+// VoxEvolve Learning Engine (Proprietary)
+// =============================================================================
+
+model AgentLesson {
+  id                  String       @id @default(cuid())
+  agentConfigId       String       @map("agent_config_id")
+  originalPrompt      String       @map("original_prompt") @db.Text
+  negativeTrigger     String       @map("negative_trigger") @db.Text
+  improvedInstruction String       @map("improved_instruction") @db.Text
+  status              LessonStatus @default(SUGGESTED)
+  createdAt           DateTime     @default(now()) @map("created_at")
+
+  // Relations
+  agent AgentConfig @relation(fields: [agentConfigId], references: [id], onDelete: Cascade)
+
+  @@index([agentConfigId])
+  @@index([status])
+  @@map("agent_lessons")
 }

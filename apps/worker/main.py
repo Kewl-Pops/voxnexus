@@ -268,6 +268,72 @@ async def load_guardian_config_from_db(agent_config_id: str) -> None:
 
 
 # =============================================================================
+# VoxEvolve Adaptive Memory (Proprietary Plugin - Optional)
+# =============================================================================
+
+async def fetch_approved_lessons(agent_id: str) -> list[str]:
+    """
+    Fetch approved lessons from VoxEvolve for an agent.
+
+    These lessons are behavioral improvements learned from past negative
+    sentiment events. Only APPROVED lessons are included in the prompt.
+
+    Args:
+        agent_id: The agent configuration ID
+
+    Returns:
+        List of improved instruction strings
+    """
+    try:
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT improved_instruction
+                FROM agent_lessons
+                WHERE agent_config_id = $1 AND status = 'APPROVED'
+                ORDER BY created_at DESC
+                LIMIT 10
+                """,
+                agent_id
+            )
+
+            if rows:
+                lessons = [row["improved_instruction"] for row in rows]
+                logger.info(f"[VoxEvolve] Loaded {len(lessons)} approved lesson(s) for agent {agent_id[:8]}...")
+                return lessons
+
+            return []
+
+    except Exception as e:
+        logger.debug(f"[VoxEvolve] Could not fetch lessons: {e}")
+        return []
+
+
+def build_adaptive_memory_suffix(lessons: list[str]) -> str:
+    """
+    Build the adaptive memory section for the system prompt.
+
+    Args:
+        lessons: List of approved lesson instructions
+
+    Returns:
+        Formatted adaptive memory string to append to system prompt
+    """
+    if not lessons:
+        return ""
+
+    lesson_lines = "\n".join(f"- {lesson}" for lesson in lessons)
+
+    return f"""
+
+# ADAPTIVE MEMORY
+Based on past interactions, adhere to these behavioral guidelines:
+{lesson_lines}
+"""
+
+
+# =============================================================================
 # Plugin Registries
 # =============================================================================
 
@@ -2594,6 +2660,17 @@ async def agent_entrypoint(ctx: JobContext):
 
     # Always add Visual Voice capabilities
     system_prompt += VISUAL_VOICE_PROMPT_SUFFIX
+
+    # VoxEvolve: Add adaptive memory from approved lessons
+    if agent_id:
+        try:
+            lessons = await fetch_approved_lessons(agent_id)
+            if lessons:
+                adaptive_memory = build_adaptive_memory_suffix(lessons)
+                system_prompt += adaptive_memory
+                logger.info(f"[VoxEvolve] Added {len(lessons)} lesson(s) to system prompt")
+        except Exception as e:
+            logger.debug(f"[VoxEvolve] Lessons not available: {e}")
 
     # Fetch agent's TTS config from database if we have an agent_id
     tts_config = None
