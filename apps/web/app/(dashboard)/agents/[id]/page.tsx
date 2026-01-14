@@ -30,7 +30,7 @@ interface Agent {
   updatedAt: string;
 }
 
-type Tab = "overview" | "settings" | "webhooks" | "knowledge" | "telephony" | "test";
+type Tab = "overview" | "settings" | "webhooks" | "knowledge" | "telephony" | "evolution" | "test";
 
 interface SipDevice {
   id: string;
@@ -103,6 +103,23 @@ export default function AgentDetailPage() {
   // Voice profile state
   const [voiceProfiles, setVoiceProfiles] = useState<VoiceProfile[]>([]);
 
+  // AI Coach / Evolution state
+  interface Lesson {
+    id: string;
+    agentConfigId: string;
+    originalPrompt: string;
+    negativeTrigger: string;
+    improvedInstruction: string;
+    status: "SUGGESTED" | "APPROVED" | "REJECTED";
+    createdAt: string;
+  }
+
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [lessonCounts, setLessonCounts] = useState({ suggested: 0, approved: 0, rejected: 0, total: 0 });
+  const [lessonsLoading, setLessonsLoading] = useState(false);
+  const [evolutionTab, setEvolutionTab] = useState<"pending" | "applied">("pending");
+  const [updatingLesson, setUpdatingLesson] = useState<string | null>(null);
+
   useEffect(() => {
     async function fetchAgent() {
       try {
@@ -141,12 +158,60 @@ export default function AgentDetailPage() {
     fetchVoiceProfiles();
   }, []);
 
+  // Fetch lessons when evolution tab is active
+  useEffect(() => {
+    if (activeTab === "evolution" && params.id) {
+      fetchLessons();
+    }
+  }, [activeTab, params.id, evolutionTab]);
+
+  const fetchLessons = async () => {
+    setLessonsLoading(true);
+    try {
+      const status = evolutionTab === "pending" ? "SUGGESTED" : "APPROVED";
+      const response = await fetch(`/api/agents/${params.id}/lessons?status=${status}`);
+      if (response.ok) {
+        const data = await response.json();
+        setLessons(data.data || []);
+        setLessonCounts(data.counts || { suggested: 0, approved: 0, rejected: 0, total: 0 });
+      }
+    } catch (error) {
+      console.error("Failed to fetch lessons:", error);
+    } finally {
+      setLessonsLoading(false);
+    }
+  };
+
+  const handleUpdateLesson = async (lessonId: string, status: "APPROVED" | "REJECTED") => {
+    setUpdatingLesson(lessonId);
+    try {
+      const response = await fetch(`/api/agents/${params.id}/lessons`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lessonId, status }),
+      });
+      if (response.ok) {
+        // Refresh lessons list
+        fetchLessons();
+      } else {
+        const error = await response.json();
+        alert(error.error || "Failed to update lesson");
+      }
+    } catch (error) {
+      console.error("Failed to update lesson:", error);
+      alert("Failed to update lesson");
+    } finally {
+      setUpdatingLesson(null);
+    }
+  };
+
   const tabs = [
     { id: "overview" as Tab, label: "Overview", icon: Icons.LayoutDashboard },
     { id: "settings" as Tab, label: "Settings", icon: Icons.Settings },
     { id: "webhooks" as Tab, label: "Webhooks", icon: Icons.Zap },
     { id: "knowledge" as Tab, label: "Knowledge", icon: Icons.Brain },
     { id: "telephony" as Tab, label: "Telephony", icon: Icons.Phone },
+    { id: "evolution" as Tab, label: "AI Coach", icon: Icons.BrainCircuit },
     { id: "test" as Tab, label: "Test", icon: Icons.Play },
   ];
 
@@ -1110,6 +1175,236 @@ export default function AgentDetailPage() {
                 <p>
                   <strong>Requirements:</strong> Your PBX must be accessible from this server. For
                   on-premise PBX systems, you may need to configure NAT traversal or use a SIP trunk.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {activeTab === "evolution" && (
+          <div className="space-y-6">
+            {/* Header with dark theme */}
+            <div className="bg-zinc-900 rounded-xl p-6 border border-zinc-800">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/20">
+                  <Icons.BrainCircuit size={24} className="text-amber-500" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-white">AI Coach - Continuous Evolution</h2>
+                  <p className="text-sm text-zinc-400">Transform negative interactions into learning opportunities</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Metrics Bar */}
+            <div className="grid gap-4 md:grid-cols-3">
+              <Card className="bg-zinc-900 border-zinc-800">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-blue-500/20">
+                      <Icons.Brain size={24} className="text-blue-500" />
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-white">{lessonCounts.total}</p>
+                      <p className="text-sm text-zinc-400">Total Lessons Learned</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="bg-zinc-900 border-zinc-800">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-emerald-500/20">
+                      <Icons.Check size={24} className="text-emerald-500" />
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-white">{lessonCounts.approved}</p>
+                      <p className="text-sm text-zinc-400">Patches Applied</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="bg-zinc-900 border-zinc-800">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-amber-500/20">
+                      <Icons.AlertCircle size={24} className="text-amber-500" />
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-white">{lessonCounts.suggested}</p>
+                      <p className="text-sm text-zinc-400">Pending Reviews</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Sub-Tabs */}
+            <div className="bg-zinc-900 rounded-xl border border-zinc-800 overflow-hidden">
+              <div className="border-b border-zinc-800">
+                <div className="flex">
+                  <button
+                    onClick={() => setEvolutionTab("pending")}
+                    className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors ${
+                      evolutionTab === "pending"
+                        ? "bg-amber-500/10 text-amber-500 border-b-2 border-amber-500"
+                        : "text-zinc-400 hover:text-white hover:bg-zinc-800/50"
+                    }`}
+                  >
+                    <Icons.AlertCircle size={18} />
+                    Pending Review
+                    {lessonCounts.suggested > 0 && (
+                      <span className="ml-2 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-500 text-xs">
+                        {lessonCounts.suggested}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setEvolutionTab("applied")}
+                    className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors ${
+                      evolutionTab === "applied"
+                        ? "bg-emerald-500/10 text-emerald-500 border-b-2 border-emerald-500"
+                        : "text-zinc-400 hover:text-white hover:bg-zinc-800/50"
+                    }`}
+                  >
+                    <Icons.Check size={18} />
+                    Applied Knowledge
+                    {lessonCounts.approved > 0 && (
+                      <span className="ml-2 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-500 text-xs">
+                        {lessonCounts.approved}
+                      </span>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Tab Content */}
+              <div className="p-6">
+                {lessonsLoading ? (
+                  <div className="flex justify-center py-12">
+                    <Icons.Loader size={32} className="animate-spin text-zinc-500" />
+                  </div>
+                ) : lessons.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    {evolutionTab === "pending" ? (
+                      <>
+                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-zinc-800 mb-4">
+                          <Icons.Check size={32} className="text-emerald-500" />
+                        </div>
+                        <p className="text-white font-medium mb-1">No Pending Reviews</p>
+                        <p className="text-sm text-zinc-500 max-w-md">
+                          Great job! All AI coaching suggestions have been reviewed.
+                          New suggestions will appear here when negative sentiment is detected in conversations.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-zinc-800 mb-4">
+                          <Icons.BrainCircuit size={32} className="text-zinc-500" />
+                        </div>
+                        <p className="text-white font-medium mb-1">No Applied Patches Yet</p>
+                        <p className="text-sm text-zinc-500 max-w-md">
+                          Approved lessons will appear here and automatically enhance your agent&apos;s behavior
+                          through the Adaptive Memory system.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {lessons.map((lesson) => (
+                      <div
+                        key={lesson.id}
+                        className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-5 space-y-4"
+                      >
+                        {/* Trigger Section */}
+                        <div>
+                          <p className="text-xs uppercase tracking-wider text-zinc-500 mb-2 font-medium">
+                            When the user said:
+                          </p>
+                          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                            <p className="text-red-400 text-sm italic">&quot;{lesson.negativeTrigger}&quot;</p>
+                          </div>
+                        </div>
+
+                        {/* Correction Section */}
+                        <div>
+                          <p className="text-xs uppercase tracking-wider text-zinc-500 mb-2 font-medium">
+                            The AI should follow this rule:
+                          </p>
+                          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3">
+                            <p className="text-emerald-400 text-sm">{lesson.improvedInstruction}</p>
+                          </div>
+                        </div>
+
+                        {/* Metadata & Actions */}
+                        <div className="flex items-center justify-between pt-2 border-t border-zinc-700">
+                          <p className="text-xs text-zinc-500">
+                            Generated {new Date(lesson.createdAt).toLocaleDateString()} at{" "}
+                            {new Date(lesson.createdAt).toLocaleTimeString()}
+                          </p>
+
+                          {evolutionTab === "pending" ? (
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleUpdateLesson(lesson.id, "REJECTED")}
+                                disabled={updatingLesson === lesson.id}
+                                className="text-red-400 hover:text-red-300 hover:bg-red-500/10 border-red-500/30"
+                              >
+                                <Icons.Trash size={16} className="mr-1" />
+                                Reject
+                              </Button>
+                              <Button
+                                size="sm"
+                                onClick={() => handleUpdateLesson(lesson.id, "APPROVED")}
+                                disabled={updatingLesson === lesson.id}
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                              >
+                                {updatingLesson === lesson.id ? (
+                                  <Icons.Loader size={16} className="mr-1 animate-spin" />
+                                ) : (
+                                  <Icons.Check size={16} className="mr-1" />
+                                )}
+                                Approve & Patch
+                              </Button>
+                            </div>
+                          ) : (
+                            <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+                              <Icons.Check size={14} className="mr-1" />
+                              Active
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* How It Works */}
+            <Card className="bg-zinc-900 border-zinc-800">
+              <CardHeader>
+                <CardTitle className="text-white">How AI Coach Works</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-zinc-400">
+                <p>
+                  <strong className="text-white">1. Detection:</strong> VoxGuardian monitors conversations
+                  for negative sentiment in real-time.
+                </p>
+                <p>
+                  <strong className="text-white">2. Analysis:</strong> When frustration is detected,
+                  VoxEvolve analyzes the conversation to understand what went wrong.
+                </p>
+                <p>
+                  <strong className="text-white">3. Suggestion:</strong> An AI-powered behavioral
+                  improvement is generated and submitted for your review.
+                </p>
+                <p>
+                  <strong className="text-white">4. Evolution:</strong> Approved patches are automatically
+                  added to your agent&apos;s Adaptive Memory, improving future interactions.
                 </p>
               </CardContent>
             </Card>

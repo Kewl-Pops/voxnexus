@@ -1211,3 +1211,60 @@ export function UserX({ size = 24, className, ...props }: IconProps) {
     </svg>
   );
 }
+
+export function BrainCircuit({ size = 24, className, ...props }: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={cn("", className)}
+      {...props}
+    >
+      <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+      <path d="M9 13a4.5 4.5 0 0 0 3-4" />
+      <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5" />
+      <path d="M3.477 10.896a4 4 0 0 1 .585-.396" />
+      <path d="M6 18a4 4 0 0 1-1.967-.516" />
+      <path d="M12 13h4" />
+      <path d="M12 18h6a2 2 0 0 1 2 2v1" />
+      <path d="M12 8h8" />
+      <path d="M16 8V5a2 2 0 0 1 2-2" />
+      <circle cx="16" cy="13" r="1" />
+      <circle cx="16" cy="8" r="1" />
+      <circle cx="18" cy="3" r="1" />
+      <circle cx="20" cy="21" r="1" />
+      <circle cx="20" cy="8" r="1" />
+    </svg>
+  );
+}
+
+export function Sparkles({ size = 24, className, ...props }: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={cn("", className)}
+      {...props}
+    >
+      <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+      <path d="M20 3v4" />
+      <path d="M22 5h-4" />
+      <path d="M4 17v2" />
+      <path d="M5 18H3" />
+    </svg>
+  );
+}
