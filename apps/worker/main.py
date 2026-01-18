@@ -191,6 +191,435 @@ def get_guardian() -> BaseGuardian | None:
     return _guardian_plugin
 
 
+# =============================================================================
+# VoxEvolve Coach Plugin (Proprietary - Optional)
+# =============================================================================
+_coach_plugin = None
+
+
+def load_coach_plugin() -> None:
+    """
+    Load the VoxEvolve Coach plugin (proprietary enterprise feature).
+
+    The coach plugin listens for negative sentiment events from Guardian
+    and triggers the VoxEvolve Learning Engine to generate behavioral improvements.
+    """
+    global _coach_plugin
+
+    # Check if Guardian is active (coach depends on Guardian events)
+    if _guardian_plugin is None:
+        logger.debug("Coach plugin skipped: Guardian not active")
+        return
+
+    # Check for license key
+    license_key = os.getenv("VOXNEXUS_LICENSE_KEY", "")
+    if not license_key:
+        logger.debug("Coach plugin skipped: No license key")
+        return
+
+    try:
+        from plugins.coach import VoxEvolveCoach
+
+        _coach_plugin = VoxEvolveCoach()
+
+        # Start listening for sentiment events in background
+        import threading
+
+        def run_coach():
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(_coach_plugin.start())
+
+        coach_thread = threading.Thread(target=run_coach, daemon=True)
+        coach_thread.start()
+
+        logger.info("=" * 60)
+        logger.info("🧠 VOXEVOLVE AI COACH: ACTIVE")
+        logger.info("   Listening for negative sentiment events")
+        logger.info("   Behavioral optimization: ENABLED")
+        logger.info("=" * 60)
+
+    except ImportError:
+        logger.debug("Coach plugin not available")
+    except Exception as e:
+        logger.error(f"Coach plugin initialization failed: {e}")
+
+
+# =============================================================================
+# VoxResonance Acoustic Analysis Plugin (Proprietary - Optional)
+# =============================================================================
+_resonance_sensor = None
+_resonance_licensed = False
+
+
+def load_resonance_plugin() -> bool:
+    """
+    Load the VoxResonance acoustic analysis plugin (proprietary enterprise feature).
+
+    VoxResonance provides real-time DSP analysis of voice audio to extract:
+    - Energy: RMS-based intensity measurement (0-1)
+    - Agitation: Zero-Crossing Rate for voice tension detection (0-1)
+
+    These metrics feed the "Vibe Meter" dashboard visualization for real-time
+    emotional state monitoring during calls.
+
+    Returns:
+        True if VoxResonance is loaded and licensed, False otherwise
+    """
+    global _resonance_sensor, _resonance_licensed
+
+    try:
+        from plugins.resonance import verify_license, AcousticSensor
+
+        if not verify_license():
+            logger.debug("VoxResonance plugin skipped: License not valid")
+            return False
+
+        _resonance_sensor = AcousticSensor(sample_rate=24000)
+        _resonance_licensed = True
+
+        logger.info("=" * 60)
+        logger.info("📊 VOXRESONANCE ACOUSTIC ANALYSIS: ACTIVE")
+        logger.info("   Energy detection (RMS): ENABLED")
+        logger.info("   Agitation analysis (ZCR): ENABLED")
+        logger.info("   Vibe Meter dashboard: ENABLED")
+        logger.info("=" * 60)
+
+        return True
+
+    except ImportError:
+        logger.debug("VoxResonance plugin not available")
+        return False
+    except Exception as e:
+        logger.error(f"VoxResonance plugin initialization failed: {e}")
+        return False
+
+
+def get_resonance_sensor():
+    """Get the current VoxResonance AcousticSensor instance."""
+    return _resonance_sensor
+
+
+def is_resonance_active() -> bool:
+    """Check if VoxResonance is active and licensed."""
+    return _resonance_licensed and _resonance_sensor is not None
+
+
+async def emit_vibe_event(room_name: str, energy: float, agitation: float, is_speech: bool):
+    """
+    Emit a vibe event to Redis for the dashboard.
+
+    Args:
+        room_name: The LiveKit room name
+        energy: Energy level 0-1
+        agitation: Agitation level 0-1
+        is_speech: Whether speech was detected
+    """
+    import redis.asyncio as aioredis
+    import json
+    import time
+
+    # Update global vibe state for VoxChameleon
+    global _current_vibe_energy, _current_vibe_agitation
+    _current_vibe_energy = energy
+    _current_vibe_agitation = agitation
+
+    try:
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        redis_client = aioredis.from_url(redis_url)
+
+        event_data = {
+            "room": room_name,
+            "energy": round(energy, 3),
+            "agitation": round(agitation, 3),
+            "is_speech": is_speech,
+            "timestamp": time.time(),
+        }
+
+        # Publish to call:vibe channel
+        await redis_client.publish("call:vibe", json.dumps(event_data))
+
+        # Log high intensity
+        if energy > 0.8:
+            logger.warning(f"[VoxResonance] High Intensity Detected: energy={energy:.2f} room={room_name}")
+
+        await redis_client.close()
+    except Exception as e:
+        logger.error(f"[VoxResonance] Failed to emit vibe event: {e}")
+
+
+# =============================================================================
+# VoxChameleon Voice Adaptation Plugin (Proprietary - Optional)
+# =============================================================================
+_chameleon_adapter = None
+_chameleon_licensed = False
+_current_vibe_energy = 0.0
+_current_vibe_agitation = 0.0
+
+
+def load_chameleon_plugin() -> bool:
+    """
+    Load the VoxChameleon voice adaptation plugin (proprietary enterprise feature).
+
+    VoxChameleon applies real-time DSP transformations to TTS audio based on
+    the caller's emotional state (vibe) to reduce psychological friction:
+    - High agitation → Deeper, slower, warmer voice (de-escalation)
+    - High energy → Slightly higher, faster voice (enthusiasm matching)
+
+    Returns:
+        True if VoxChameleon is loaded and licensed, False otherwise
+    """
+    global _chameleon_adapter, _chameleon_licensed
+
+    try:
+        from plugins.chameleon.vox_chameleon import VoiceAdapter, VibeVector
+
+        # VoxChameleon uses the same license as VoxResonance (they work together)
+        from plugins.resonance import verify_license
+        if not verify_license():
+            logger.debug("VoxChameleon plugin skipped: License not valid")
+            return False
+
+        _chameleon_adapter = VoiceAdapter(
+            sample_rate=24000,  # Match TTS output sample rate
+            use_interpolation=True,  # Smooth transitions
+        )
+        _chameleon_licensed = True
+
+        logger.info("=" * 60)
+        logger.info("🎭 VOXCHAMELEON VOICE ADAPTATION: ACTIVE")
+        logger.info("   Audio Mirror DSP: ENABLED")
+        logger.info("   De-escalation mode: agitation > 0.7 → calm voice")
+        logger.info("   Energy matching: energy > 0.8 → enthusiastic voice")
+        logger.info("=" * 60)
+
+        return True
+
+    except ImportError as e:
+        logger.debug(f"VoxChameleon plugin not available: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"VoxChameleon plugin initialization failed: {e}")
+        return False
+
+
+def get_chameleon_adapter():
+    """Get the current VoxChameleon VoiceAdapter instance."""
+    return _chameleon_adapter
+
+
+def is_chameleon_active() -> bool:
+    """Check if VoxChameleon is active and licensed."""
+    return _chameleon_licensed and _chameleon_adapter is not None
+
+
+def get_current_vibe():
+    """Get the current vibe state from VoxResonance analysis."""
+    return _current_vibe_energy, _current_vibe_agitation
+
+
+def adapt_tts_audio(audio_data: bytes, sample_rate: int = 24000) -> bytes:
+    """
+    Apply VoxChameleon adaptation to TTS audio based on current vibe.
+
+    This function is called on TTS output audio chunks to apply real-time
+    voice adaptation based on the caller's emotional state.
+
+    Args:
+        audio_data: Raw PCM audio bytes (int16)
+        sample_rate: Audio sample rate (default 24000)
+
+    Returns:
+        Adapted audio bytes
+    """
+    if not is_chameleon_active():
+        return audio_data
+
+    try:
+        import numpy as np
+        from plugins.chameleon.vox_chameleon import VibeVector
+
+        # Get current vibe from VoxResonance
+        energy, agitation = get_current_vibe()
+        vibe = VibeVector(agitation=agitation, energy=energy)
+
+        # Convert bytes to numpy array
+        audio = np.frombuffer(audio_data, dtype=np.int16)
+
+        # Apply VoxChameleon transformation
+        adapted = _chameleon_adapter.process(audio, vibe)
+
+        # Log when adaptation is active
+        state = _chameleon_adapter.stats.current_state
+        if state != "neutral":
+            logger.debug(f"[VoxChameleon] Adapting TTS: state={state}, agitation={agitation:.2f}, energy={energy:.2f}")
+
+        return adapted.tobytes()
+
+    except Exception as e:
+        logger.error(f"[VoxChameleon] Audio adaptation failed: {e}")
+        return audio_data  # Return original on error
+
+
+class ChameleonTTSWrapper:
+    """
+    TTS wrapper that applies VoxChameleon audio adaptation.
+
+    Wraps any LiveKit-compatible TTS instance and intercepts the audio
+    output to apply real-time voice adaptation based on caller vibe.
+    """
+
+    def __init__(self, wrapped_tts):
+        """
+        Initialize the wrapper.
+
+        Args:
+            wrapped_tts: The original TTS instance to wrap
+        """
+        self._tts = wrapped_tts
+        # Copy capabilities from wrapped TTS
+        if hasattr(wrapped_tts, 'capabilities'):
+            self._capabilities = wrapped_tts.capabilities
+        elif hasattr(wrapped_tts, '_capabilities'):
+            self._capabilities = wrapped_tts._capabilities
+        else:
+            # Default capabilities
+            from livekit.agents.tts import TTSCapabilities
+            self._capabilities = TTSCapabilities(streaming=True)
+
+    @property
+    def capabilities(self):
+        """Return TTS capabilities."""
+        return self._capabilities
+
+    def synthesize(self, text: str):
+        """
+        Synthesize text to speech with VoxChameleon adaptation.
+
+        Returns an async iterator that yields adapted audio frames.
+        """
+        return ChameleonSynthesizeStream(self._tts, text)
+
+    def stream(self):
+        """Return a streaming TTS session with VoxChameleon adaptation."""
+        return ChameleonStreamAdapter(self._tts)
+
+
+class ChameleonSynthesizeStream:
+    """Async iterator for synthesize() with VoxChameleon adaptation."""
+
+    def __init__(self, tts, text: str):
+        self._tts = tts
+        self._text = text
+        self._stream = None
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        import numpy as np
+
+        # Initialize stream on first iteration
+        if self._stream is None:
+            self._stream = self._tts.synthesize(self._text).__aiter__()
+
+        try:
+            # Get next frame from wrapped TTS
+            frame = await self._stream.__anext__()
+
+            # Apply VoxChameleon if active
+            if is_chameleon_active() and hasattr(frame, 'data') and frame.data:
+                adapted_data = adapt_tts_audio(frame.data)
+                # Create new frame with adapted data
+                from livekit import rtc
+                return rtc.AudioFrame(
+                    data=adapted_data,
+                    sample_rate=frame.sample_rate,
+                    num_channels=frame.num_channels if hasattr(frame, 'num_channels') else 1,
+                    samples_per_channel=len(adapted_data) // 2,  # int16 = 2 bytes
+                )
+            return frame
+
+        except StopAsyncIteration:
+            raise
+
+
+class ChameleonStreamAdapter:
+    """Streaming TTS adapter with VoxChameleon adaptation."""
+
+    def __init__(self, tts):
+        self._tts = tts
+        self._stream = None
+
+    async def __aenter__(self):
+        if hasattr(self._tts, 'stream'):
+            self._stream = self._tts.stream()
+            if hasattr(self._stream, '__aenter__'):
+                await self._stream.__aenter__()
+        return self
+
+    async def __aexit__(self, *args):
+        if self._stream and hasattr(self._stream, '__aexit__'):
+            await self._stream.__aexit__(*args)
+
+    def push_text(self, text: str):
+        """Push text to synthesize."""
+        if self._stream and hasattr(self._stream, 'push_text'):
+            self._stream.push_text(text)
+
+    def end_input(self):
+        """Signal end of input."""
+        if self._stream and hasattr(self._stream, 'end_input'):
+            self._stream.end_input()
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        import numpy as np
+
+        if self._stream is None:
+            raise StopAsyncIteration
+
+        try:
+            # Get next frame from wrapped stream
+            frame = await self._stream.__anext__()
+
+            # Apply VoxChameleon if active
+            if is_chameleon_active() and hasattr(frame, 'data') and frame.data:
+                adapted_data = adapt_tts_audio(frame.data)
+                from livekit import rtc
+                return rtc.AudioFrame(
+                    data=adapted_data,
+                    sample_rate=frame.sample_rate,
+                    num_channels=frame.num_channels if hasattr(frame, 'num_channels') else 1,
+                    samples_per_channel=len(adapted_data) // 2,
+                )
+            return frame
+
+        except StopAsyncIteration:
+            raise
+
+
+def wrap_tts_with_chameleon(tts_instance):
+    """
+    Wrap a TTS instance with VoxChameleon adaptation.
+
+    Only wraps if VoxChameleon is active, otherwise returns original.
+
+    Args:
+        tts_instance: Original TTS instance
+
+    Returns:
+        Wrapped TTS (if Chameleon active) or original TTS
+    """
+    if is_chameleon_active():
+        logger.info("[VoxChameleon] Wrapping TTS with audio adaptation")
+        return ChameleonTTSWrapper(tts_instance)
+    return tts_instance
+
+
 async def load_guardian_config_from_db(agent_config_id: str) -> None:
     """
     Load Guardian configuration from the database and update the Guardian instance.
@@ -2741,6 +3170,9 @@ async def agent_entrypoint(ctx: JobContext):
     tts_instance = await create_tts_from_config(tts_config)
     logger.info(f"TTS provider: {tts_config.get('provider', 'openai') if tts_config else 'openai (default)'}")
 
+    # Wrap TTS with VoxChameleon for real-time voice adaptation
+    tts_instance = wrap_tts_with_chameleon(tts_instance)
+
     agent = Agent(
         instructions=system_prompt,
         vad=silero.VAD.load(),
@@ -2776,6 +3208,87 @@ async def agent_entrypoint(ctx: JobContext):
                 logger.error(f"[Guardian] Failed to analyze text: {e}")
 
         logger.info("[Guardian] Transcript analysis hook registered")
+
+    # =========================================================================
+    # VoxResonance: Real-time acoustic analysis for Vibe Meter
+    # =========================================================================
+    resonance_sensor = get_resonance_sensor()
+    resonance_active = is_resonance_active()
+
+    if resonance_active and resonance_sensor:
+        # Track audio processing state
+        _audio_buffer = bytearray()
+        _last_vibe_emit = 0.0
+        VIBE_EMIT_INTERVAL = 0.2  # Emit every 200ms
+
+        @ctx.room.on("track_subscribed")
+        def on_track_subscribed(track, publication, participant):
+            """Handle subscribed audio tracks for VoxResonance analysis."""
+            if track.kind != livekit.rtc.TrackKind.KIND_AUDIO:
+                return
+
+            if participant == ctx.room.local_participant:
+                return  # Skip our own audio
+
+            logger.info(f"[VoxResonance] Subscribed to audio track from {participant.identity}")
+
+            # Create audio stream to process frames
+            async def process_audio_stream():
+                nonlocal _audio_buffer, _last_vibe_emit
+
+                try:
+                    audio_stream = livekit.rtc.AudioStream(track)
+                    async for frame_event in audio_stream:
+                        if human_takeover_active:
+                            continue  # Skip during human takeover
+
+                        # Get PCM data from frame
+                        frame = frame_event.frame
+                        pcm_data = frame.data.tobytes()
+
+                        # Accumulate audio buffer
+                        _audio_buffer.extend(pcm_data)
+
+                        # Process when we have enough data (50ms at 24kHz = 2400 samples = 4800 bytes)
+                        if len(_audio_buffer) >= 4800:
+                            import time
+                            current_time = time.time()
+
+                            # Emit at controlled intervals
+                            if current_time - _last_vibe_emit >= VIBE_EMIT_INTERVAL:
+                                metrics = resonance_sensor.analyze(bytes(_audio_buffer))
+                                if metrics:
+                                    asyncio.create_task(
+                                        emit_vibe_event(
+                                            ctx.room.name,
+                                            metrics.energy,
+                                            metrics.agitation,
+                                            metrics.is_speech,
+                                        )
+                                    )
+                                _last_vibe_emit = current_time
+
+                            # Clear buffer (keep some overlap for continuity)
+                            _audio_buffer = _audio_buffer[-1200:]
+
+                except Exception as e:
+                    logger.error(f"[VoxResonance] Audio stream processing error: {e}")
+
+            # Start processing in background
+            asyncio.create_task(process_audio_stream())
+
+        logger.info("[VoxResonance] Audio track analysis hook registered")
+
+        # Publish VoxResonance status to frontend
+        import json
+        await ctx.room.local_participant.publish_data(
+            json.dumps({
+                "type": "resonance_status",
+                "status": "active",
+                "resonance_active": True,
+            }).encode("utf-8"),
+            topic="resonance_status",
+        )
 
     # Publish Guardian status to frontend
     if guardian_active:
@@ -2903,6 +3416,16 @@ def main():
 
     # Load Guardian Security Suite (proprietary plugin - optional)
     load_guardian_plugin()
+
+    # Load VoxEvolve Coach (proprietary plugin - optional)
+    load_coach_plugin()
+
+    # Load VoxResonance Acoustic Analysis (proprietary plugin - optional)
+    load_resonance_plugin()
+
+    # Load VoxChameleon Voice Adaptation (proprietary plugin - optional)
+    # VoxChameleon uses VoxResonance vibe data to adapt TTS voice
+    load_chameleon_plugin()
 
     # Check for required environment variables
     livekit_url = os.getenv("LIVEKIT_URL")
